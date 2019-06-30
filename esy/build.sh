@@ -19,5 +19,7 @@ else
 fi
 
 ninja.exe -C $cur__target_dir/out/Static
-ninja.exe -C $cur__target_dir/out/Shared
-
+if [[ $OS == 'windows' ]]
+then
+    ninja.exe -C $cur__target_dir/out/Shared
+fi
