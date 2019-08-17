@@ -59,27 +59,30 @@ jobs:
   steps:
   - template: .ci/use-node.yml
   - template: .ci/restore-build-cache.yml
-  - script: npm install -g esy@0.5.6
+  - script: npm install -g esy@0.5.8
     displayName: 'Install esy'
-  - script: git clone https://github.com/bryphe/esy-bash
-    displayName: 'Cloning esy-bash'
-  - script: npm i
-    displayName: 'npm i'
-    workingDirectory: 'esy-bash'
   - script: esy
-    displayName: 'esy'
-    workingDirectory: 'esy-bash/re'
-  - script: npm run build-cygwin
-    displayName: 'npm run build-cygwin'
-    workingDirectory: 'esy-bash'
-  - script: npm run package-cygwin
-    displayName: 'npm run package-cygwin'
-    workingDirectory: 'esy-bash'
-  - script: node ./postinstall.js
-    displayName: 'esy-bash postinstall'
-    workingDirectory: 'esy-bash'
-  - powershell: |
-      $env:ESY__ESY_BASH = "$(Build.SourcesDirectory)\esy-bash"
-      echo $env:ESY__ESY_BASH
-      esy  
-    displayName: 'esy (with modified esy-bash)'
+    displayName: 'Run esy'
+#   - script: git clone https://github.com/bryphe/esy-bash
+#     displayName: 'Cloning esy-bash'
+#   - script: npm i
+#     displayName: 'npm i'
+#     workingDirectory: 'esy-bash'
+#   - script: esy
+#     displayName: 'esy'
+#     workingDirectory: 'esy-bash/re'
+#   - script: npm run build-cygwin
+#     displayName: 'npm run build-cygwin'
+#     workingDirectory: 'esy-bash'
+#   - script: npm run package-cygwin
+#     displayName: 'npm run package-cygwin'
+#     workingDirectory: 'esy-bash'
+#   - script: node ./postinstall.js
+#     displayName: 'esy-bash postinstall'
+#     workingDirectory: 'esy-bash'
+#   - powershell: |
+#       $env:ESY__ESY_BASH = "$(Build.SourcesDirectory)\esy-bash"
+#       echo $env:ESY__ESY_BASH
+#       esy  
+#     displayName: 'esy (with modified esy-bash)'
+   
