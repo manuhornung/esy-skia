@@ -7,21 +7,21 @@
 #include "include/core/SkTypes.h"
 #if defined(SK_BUILD_FOR_WIN)
 
-#include "include/private/SkLeanWindows.h"
 #include "include/private/SkMutex.h"
+#include "src/core/SkLeanWindows.h"
 #include "src/core/SkTLS.h"
 
 static bool gOnce = false;
 static DWORD gTlsIndex;
-SK_DECLARE_STATIC_MUTEX(gMutex);
 
 void* SkTLS::PlatformGetSpecific(bool forceCreateTheSlot) {
+    static SkMutex& mutex = *(new SkMutex);
     if (!forceCreateTheSlot && !gOnce) {
         return nullptr;
     }
 
     if (!gOnce) {
-        SkAutoMutexAcquire tmp(gMutex);
+        SkAutoMutexExclusive tmp(mutex);
         if (!gOnce) {
             gTlsIndex = TlsAlloc();
             gOnce = true;

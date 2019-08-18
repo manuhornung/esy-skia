@@ -8,11 +8,13 @@
 #ifndef SkStrikeInterface_DEFINED
 #define SkStrikeInterface_DEFINED
 
-#include <memory>
-
+#include "include/core/SkPaint.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkTypes.h"
+#include "src/core/SkGlyph.h"
 #include "src/core/SkSpan.h"
+
+#include <memory>
 
 class SkDescriptor;
 class SkGlyph;
@@ -33,25 +35,6 @@ struct SkScalerContextEffects {
     SkMaskFilter*   fMaskFilter;
 };
 
-class SkStrikeSpec {
-public:
-    SkStrikeSpec(const SkDescriptor& desc,
-                 const SkTypeface& typeface,
-                 const SkScalerContextEffects& effects)
-            : fDesc{desc}
-            , fTypeface{typeface}
-            , fEffects{effects} {}
-
-    const SkDescriptor& desc() const { return fDesc; }
-    const SkTypeface& typeface() const { return fTypeface; }
-    SkScalerContextEffects effects() const {return fEffects; }
-
-private:
-    const SkDescriptor& fDesc;
-    const SkTypeface& fTypeface;
-    const SkScalerContextEffects fEffects;
-};
-
 struct SkGlyphPos {
     size_t index;
     const SkGlyph* glyph;
@@ -66,32 +49,40 @@ struct SkPathPos {
 class SkStrikeInterface {
 public:
     virtual ~SkStrikeInterface() = default;
-    virtual SkVector rounding() const = 0;
     virtual const SkDescriptor& getDescriptor() const = 0;
-    virtual SkStrikeSpec strikeSpec() const = 0;
 
     enum PreparationDetail {
         kBoundsOnly,
         kImageIfNeeded,
     };
 
-    // prepareForDrawing takes glyphIDs, and position, and returns a list of SkGlyphs and
-    // positions where all the data to draw the glyph has been created. The maxDimension
+    // prepareForDrawingRemoveEmpty takes glyphIDs, and position, and returns a list of SkGlyphs
+    // and positions where all the data to draw the glyph has been created. The maxDimension
     // parameter determines if the mask/SDF version will be created, or an alternate drawing
     // format should be used. For path-only drawing set maxDimension to 0, and for bitmap-device
     // drawing (where there is no upper limit to the glyph in the cache) use INT_MAX.
     // * PreparationDetail determines, in the mask case, if the mask/SDF should be generated.
     //   This does not affect the path or fallback cases.
-    virtual SkSpan<const SkGlyphPos> prepareForDrawing(const SkGlyphID glyphIDs[],
-                                                       const SkPoint positions[],
-                                                       size_t n,
-                                                       int maxDimension,
-                                                       PreparationDetail detail,
-                                                       SkGlyphPos results[]) = 0;
+    // prepareForDrawingRemoveEmpty should remove all empty glyphs from the returned span.
+    virtual SkSpan<const SkGlyphPos>
+    prepareForDrawingRemoveEmpty(const SkPackedGlyphID packedGlyphIDs[],
+                                 const SkPoint positions[],
+                                 size_t n,
+                                 int maxDimension,
+                                 PreparationDetail detail,
+                                 SkGlyphPos results[]) = 0;
 
-    virtual const SkGlyph& getGlyphMetrics(SkGlyphID glyphID, SkPoint position) = 0;
-    // TODO: Deprecated. Do not use. Remove when ARGB fallback for bitmap device paths is working.
-    virtual void generatePath(const SkGlyph& glyph) = 0;
+    // rounding() and subpixelMask are used to calculate the subpixel position of a glyph.
+    // The per component (x or y) calculation is:
+    //
+    //   subpixelOffset = (floor((viewportPosition + rounding) & mask) >> 14) & 3
+    //
+    // where mask is either 0 or ~0, and rounding is either
+    // 1/2 for non-subpixel or 1/8 for subpixel.
+    virtual SkVector rounding() const = 0;
+    virtual SkIPoint subpixelMask() const = 0;
+
+    // Used with SkScopedStrike to take action at the end of a scope.
     virtual void onAboutToExitScope() = 0;
 
     struct Deleter {
@@ -110,5 +101,4 @@ public:
                                                     const SkScalerContextEffects& effects,
                                                     const SkTypeface& typeface) = 0;
 };
-
 #endif  //SkStrikeInterface_DEFINED

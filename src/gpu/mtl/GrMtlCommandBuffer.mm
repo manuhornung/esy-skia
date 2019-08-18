@@ -7,17 +7,21 @@
 
 #include "src/gpu/mtl/GrMtlCommandBuffer.h"
 #include "src/gpu/mtl/GrMtlGpu.h"
+#include "src/gpu/mtl/GrMtlGpuCommandBuffer.h"
 #include "src/gpu/mtl/GrMtlPipelineState.h"
+
+#if !__has_feature(objc_arc)
+#error This file must be compiled with Arc. Use -fobjc-arc flag
+#endif
 
 GrMtlCommandBuffer* GrMtlCommandBuffer::Create(id<MTLCommandQueue> queue) {
     id<MTLCommandBuffer> mtlCommandBuffer;
-    SK_BEGIN_AUTORELEASE_BLOCK
     mtlCommandBuffer = [queue commandBuffer];
-    SK_END_AUTORELEASE_BLOCK
-
     if (nil == mtlCommandBuffer) {
         return nullptr;
     }
+
+    mtlCommandBuffer.label = @"GrMtlCommandBuffer::Create";
 
     return new GrMtlCommandBuffer(mtlCommandBuffer);
 }
@@ -34,9 +38,7 @@ id<MTLBlitCommandEncoder> GrMtlCommandBuffer::getBlitCommandEncoder() {
     }
 
     if (nil == fActiveBlitCommandEncoder) {
-        SK_BEGIN_AUTORELEASE_BLOCK
         fActiveBlitCommandEncoder = [fCmdBuffer blitCommandEncoder];
-        SK_END_AUTORELEASE_BLOCK
     }
     fPreviousRenderPassDescriptor = nil;
 
@@ -57,8 +59,9 @@ static bool compatible(const MTLRenderPassAttachmentDescriptor* first,
                              first.storeAction == MTLStoreActionDontCare;
     bool loadActionsValid = second.loadAction == MTLLoadActionLoad ||
                             second.loadAction == MTLLoadActionDontCare;
-    bool secondDoesntSampleFirst = !pipelineState ||
-                                   pipelineState->doesntSampleAttachment(first);
+    bool secondDoesntSampleFirst = (!pipelineState ||
+                                    pipelineState->doesntSampleAttachment(first)) &&
+                                   second.storeAction != MTLStoreActionMultisampleResolve;
 
     return renderTargetsMatch &&
            (nil == first.texture ||
@@ -66,7 +69,8 @@ static bool compatible(const MTLRenderPassAttachmentDescriptor* first,
 }
 
 id<MTLRenderCommandEncoder> GrMtlCommandBuffer::getRenderCommandEncoder(
-        MTLRenderPassDescriptor* descriptor, const GrMtlPipelineState* pipelineState) {
+        MTLRenderPassDescriptor* descriptor, const GrMtlPipelineState* pipelineState,
+        GrMtlGpuRTCommandBuffer* gpuCommandBuffer) {
     if (nil != fPreviousRenderPassDescriptor) {
         if (compatible(fPreviousRenderPassDescriptor.colorAttachments[0],
                        descriptor.colorAttachments[0], pipelineState) &&
@@ -77,9 +81,10 @@ id<MTLRenderCommandEncoder> GrMtlCommandBuffer::getRenderCommandEncoder(
     }
 
     this->endAllEncoding();
-    SK_BEGIN_AUTORELEASE_BLOCK
     fActiveRenderCommandEncoder = [fCmdBuffer renderCommandEncoderWithDescriptor:descriptor];
-    SK_END_AUTORELEASE_BLOCK
+    if (gpuCommandBuffer) {
+        gpuCommandBuffer->initRenderState(fActiveRenderCommandEncoder);
+    }
     fPreviousRenderPassDescriptor = descriptor;
 
     return fActiveRenderCommandEncoder;

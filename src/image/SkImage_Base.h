@@ -13,8 +13,8 @@
 #include <atomic>
 
 #if SK_SUPPORT_GPU
-#include "include/private/GrTextureProxy.h"
 #include "include/private/SkTDArray.h"
+#include "src/gpu/GrTextureProxy.h"
 
 class GrRecordingContext;
 class GrTexture;
@@ -100,6 +100,9 @@ public:
 
     virtual sk_sp<SkImage> onMakeColorTypeAndColorSpace(GrRecordingContext*,
                                                         SkColorType, sk_sp<SkColorSpace>) const = 0;
+
+    virtual sk_sp<SkImage> onReinterpretColorSpace(sk_sp<SkColorSpace>) const = 0;
+
 protected:
     SkImage_Base(const SkImageInfo& info, uint32_t uniqueID);
 

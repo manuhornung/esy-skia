@@ -8,7 +8,7 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkPoint3.h"
 #include "include/core/SkUnPreMultiply.h"
-#include "include/private/SkArenaAlloc.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkBitmapProcState.h"
 #include "src/core/SkMathPriv.h"
 #include "src/core/SkNormalSource.h"
@@ -166,7 +166,7 @@ private:
             fragBuilder->codeAppendf("half4 diffuseColor = %s;", args.fInputColor);
 
             SkString dstNormalName("dstNormal");
-            this->emitChild(0, &dstNormalName, args);
+            this->invokeChild(0, &dstNormalName, args);
 
             fragBuilder->codeAppendf("float3 normal = %s.xyz;", dstNormalName.c_str());
 

@@ -11,7 +11,6 @@
 #include "include/core/SkBBHFactory.h"
 #include "include/core/SkPicture.h"
 #include "include/core/SkRefCnt.h"
-#include "include/private/SkNoncopyable.h"
 
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
 namespace android {
@@ -22,11 +21,12 @@ namespace android {
 class GrContext;
 class SkCanvas;
 class SkDrawable;
+class SkMiniRecorder;
 class SkPictureRecord;
 class SkRecord;
 class SkRecorder;
 
-class SK_API SkPictureRecorder : SkNoncopyable {
+class SK_API SkPictureRecorder {
 public:
     SkPictureRecorder();
     ~SkPictureRecorder();
@@ -116,8 +116,10 @@ private:
     sk_sp<SkBBoxHierarchy>      fBBH;
     std::unique_ptr<SkRecorder> fRecorder;
     sk_sp<SkRecord>             fRecord;
+    std::unique_ptr<SkMiniRecorder> fMiniRecorder;
 
-    typedef SkNoncopyable INHERITED;
+    SkPictureRecorder(SkPictureRecorder&&) = delete;
+    SkPictureRecorder& operator=(SkPictureRecorder&&) = delete;
 };
 
 #endif

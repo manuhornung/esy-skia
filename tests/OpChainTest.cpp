@@ -166,14 +166,14 @@ DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/) {
     desc.fConfig = kRGBA_8888_GrPixelConfig;
     desc.fWidth = kNumOps + 1;
     desc.fHeight = 1;
-    desc.fFlags = kRenderTarget_GrSurfaceFlag;
 
     const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
+        context->priv().caps()->getDefaultBackendFormat(GrColorType::kRGBA_8888,
+                                                        GrRenderable::kYes);
 
     auto proxy = context->priv().proxyProvider()->createProxy(
-            format, desc, kTopLeft_GrSurfaceOrigin, GrMipMapped::kNo, SkBackingFit::kExact,
-            SkBudgeted::kNo, GrInternalSurfaceFlags::kNone);
+            format, desc, GrRenderable::kYes, 1, kTopLeft_GrSurfaceOrigin, GrMipMapped::kNo,
+            SkBackingFit::kExact, SkBudgeted::kNo, GrProtected::kNo, GrInternalSurfaceFlags::kNone);
     SkASSERT(proxy);
     proxy->instantiate(context->priv().resourceProvider());
     int result[result_width()];
@@ -204,7 +204,6 @@ DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/) {
                 GrTokenTracker tracker;
                 GrOpFlushState flushState(context->priv().getGpu(),
                                           context->priv().resourceProvider(),
-                                          context->priv().getResourceCache(),
                                           &tracker);
                 GrRenderTargetOpList opList(sk_ref_sp(context->priv().opMemoryPool()),
                                             sk_ref_sp(proxy->asRenderTargetProxy()),
@@ -222,7 +221,9 @@ DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/) {
                     range.fOffset += pos;
                     auto op = TestOp::Make(context.get(), value, range, result, &combinable);
                     op->writeResult(validResult);
-                    opList.addOp(std::move(op), *context->priv().caps());
+                    opList.addOp(std::move(op),
+                                 GrTextureResolveManager(context->priv().drawingManager()),
+                                 *context->priv().caps());
                 }
                 opList.makeClosed(*context->priv().caps());
                 opList.prepare(&flushState);

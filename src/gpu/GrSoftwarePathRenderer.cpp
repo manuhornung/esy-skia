@@ -5,26 +5,26 @@
  * found in the LICENSE file.
  */
 
-#include "include/private/GrAuditTrail.h"
-#include "include/private/GrOpList.h"
 #include "include/private/SkSemaphore.h"
 #include "src/core/SkMakeUnique.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/core/SkTraceEvent.h"
+#include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrDeferredProxyUploader.h"
 #include "src/gpu/GrGpuResourcePriv.h"
 #include "src/gpu/GrOpFlushState.h"
+#include "src/gpu/GrOpList.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
+#include "src/gpu/GrRenderTargetContextPriv.h"
 #include "src/gpu/GrSWMaskHelper.h"
-#include "src/gpu/GrShape.h"
 #include "src/gpu/GrSoftwarePathRenderer.h"
 #include "src/gpu/GrSurfaceContextPriv.h"
+#include "src/gpu/geometry/GrShape.h"
 #include "src/gpu/ops/GrDrawOp.h"
-#include "src/gpu/ops/GrFillRectOp.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 GrPathRenderer::CanDrawPath
@@ -32,7 +32,7 @@ GrSoftwarePathRenderer::onCanDrawPath(const CanDrawPathArgs& args) const {
     // Pass on any style that applies. The caller will apply the style if a suitable renderer is
     // not found and try again with the new GrShape.
     if (!args.fShape->style().applies() && SkToBool(fProxyProvider) &&
-        ((args.fAATypeFlags & AATypeFlags::kCoverage) || args.fAATypeFlags == AATypeFlags::kNone)) {
+        (args.fAAType == GrAAType::kCoverage || args.fAAType == GrAAType::kNone)) {
         // This is the fallback renderer for when a path is too complicated for the GPU ones.
         return CanDrawPath::kAsBackup;
     }
@@ -100,11 +100,8 @@ void GrSoftwarePathRenderer::DrawNonAARect(GrRenderTargetContext* renderTargetCo
                                            const SkMatrix& viewMatrix,
                                            const SkRect& rect,
                                            const SkMatrix& localMatrix) {
-    auto context = renderTargetContext->surfPriv().getContext();
-    renderTargetContext->addDrawOp(clip,
-                                   GrFillRectOp::MakeWithLocalMatrix(
-                                           context, std::move(paint), GrAAType::kNone, viewMatrix,
-                                           localMatrix, rect, &userStencilSettings));
+    renderTargetContext->priv().stencilRect(clip, &userStencilSettings, std::move(paint), GrAA::kNo,
+                                            viewMatrix, rect, &localMatrix);
 }
 
 void GrSoftwarePathRenderer::DrawAroundInvPath(GrRenderTargetContext* renderTargetContext,
@@ -178,17 +175,18 @@ static sk_sp<GrTextureProxy> make_deferred_mask_texture_proxy(GrRecordingContext
                                                               SkBackingFit fit,
                                                               int width, int height) {
     GrProxyProvider* proxyProvider = context->priv().proxyProvider();
+    const GrCaps* caps = context->priv().caps();
 
     GrSurfaceDesc desc;
     desc.fWidth = width;
     desc.fHeight = height;
     desc.fConfig = kAlpha_8_GrPixelConfig;
 
-    const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kAlpha_8_SkColorType);
+    const GrBackendFormat format = caps->getDefaultBackendFormat(GrColorType::kAlpha_8,
+                                                                 GrRenderable::kNo);
 
-    return proxyProvider->createProxy(format, desc, kTopLeft_GrSurfaceOrigin, fit,
-                                      SkBudgeted::kYes);
+    return proxyProvider->createProxy(format, desc, GrRenderable::kNo, 1, kTopLeft_GrSurfaceOrigin,
+                                      fit, SkBudgeted::kYes, GrProtected::kNo);
 }
 
 namespace {
@@ -255,7 +253,7 @@ bool GrSoftwarePathRenderer::onDrawPath(const DrawPathArgs& args) {
     // To prevent overloading the cache with entries during animations we limit the cache of masks
     // to cases where the matrix preserves axis alignment.
     bool useCache = fAllowCaching && !inverseFilled && args.fViewMatrix->preservesAxisAlignment() &&
-                    args.fShape->hasUnstyledKey() && (AATypeFlags::kCoverage & args.fAATypeFlags);
+                    args.fShape->hasUnstyledKey() && (GrAAType::kCoverage == args.fAAType);
 
     if (!GetShapeAndClipBounds(args.fRenderTargetContext,
                                *args.fClip, *args.fShape,
@@ -326,11 +324,12 @@ bool GrSoftwarePathRenderer::onDrawPath(const DrawPathArgs& args) {
 
     sk_sp<GrTextureProxy> proxy;
     if (useCache) {
-        proxy = fProxyProvider->findOrCreateProxyByUniqueKey(maskKey, kTopLeft_GrSurfaceOrigin);
+        proxy = fProxyProvider->findOrCreateProxyByUniqueKey(maskKey, GrColorType::kAlpha_8,
+                                                             kTopLeft_GrSurfaceOrigin);
     }
     if (!proxy) {
         SkBackingFit fit = useCache ? SkBackingFit::kExact : SkBackingFit::kApprox;
-        GrAA aa = GrAA(SkToBool(AATypeFlags::kCoverage & args.fAATypeFlags));
+        GrAA aa = GrAA(GrAAType::kCoverage == args.fAAType);
 
         SkTaskGroup* taskGroup = nullptr;
         if (auto direct = args.fContext->priv().asDirectContext()) {
@@ -350,7 +349,7 @@ bool GrSoftwarePathRenderer::onDrawPath(const DrawPathArgs& args) {
             GrTDeferredProxyUploader<SoftwarePathData>* uploaderRaw = uploader.get();
 
             auto drawAndUploadMask = [uploaderRaw] {
-                TRACE_EVENT0("skia", "Threaded SW Mask Render");
+                TRACE_EVENT0("skia.gpu", "Threaded SW Mask Render");
                 GrSWMaskHelper helper(uploaderRaw->getPixels());
                 if (helper.init(uploaderRaw->data().getMaskBounds())) {
                     helper.drawShape(uploaderRaw->data().getShape(),

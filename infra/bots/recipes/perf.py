@@ -83,14 +83,13 @@ def nanobench_flags(api, bot):
       # instead of ES.
       if 'NVIDIA_Shield' not in bot:
         gl_prefix = 'gles'
-      # The NP produces a long error stream when we run with MSAA.
-      # iOS crashes (skia:6399)
+      # iOS crashes with MSAA (skia:6399)
       # Nexus7 (Tegra3) does not support MSAA.
-      if ('NexusPlayer' in bot or
-          'iOS'         in bot or
+      if ('iOS'         in bot or
           'Nexus7'      in bot):
         sample_count = ''
     elif 'Intel' in bot:
+      # MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926
       sample_count = ''
     elif 'ChromeOS' in bot:
       gl_prefix = 'gles'
@@ -98,11 +97,6 @@ def nanobench_flags(api, bot):
     configs.extend([gl_prefix, gl_prefix + 'srgb'])
     if sample_count:
       configs.append(gl_prefix + 'msaa' + sample_count)
-      if ('TegraX1' in bot or
-          'Quadro' in bot or
-          'GTX' in bot or
-          ('GT610' in bot and 'Ubuntu17' not in bot)):
-        configs.extend([gl_prefix + 'nvpr' + sample_count])
 
     # We want to test both the OpenGL config and the GLES config on Linux Intel:
     # GL is used by Chrome, GLES is used by ChromeOS.
@@ -111,8 +105,24 @@ def nanobench_flags(api, bot):
 
     if 'CommandBuffer' in bot:
       configs = ['commandbuffer']
+
     if 'Vulkan' in bot:
       configs = ['vk']
+      if 'Android' in bot:
+        # skbug.com/9274
+        if 'Pixel2XL' not in bot:
+          configs.append('vkmsaa4')
+      else:
+        # MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926, skia:9023
+        if 'Intel' not in bot:
+          configs.append('vkmsaa8')
+
+    if 'Metal' in bot:
+      configs = ['mtl']
+      if 'iOS' in bot:
+        configs.append('mtlmsaa4')
+      else:
+        configs.append('mtlmsaa8')
 
     if 'ANGLE' in bot:
       # Test only ANGLE configs.
@@ -137,8 +147,7 @@ def nanobench_flags(api, bot):
   if 'NoGPUThreads' in bot:
     args.extend(['--gpuThreads', '0'])
 
-  if 'Valgrind' in bot:
-    # Don't care about Valgrind performance.
+  if 'Debug' in bot or 'ASAN' in bot or 'Valgrind' in bot:
     args.extend(['--loops',   '1'])
     args.extend(['--samples', '1'])
     # Ensure that the bot framework does not think we have timed out.
@@ -199,55 +208,17 @@ def nanobench_flags(api, bot):
     match.append('~top25desk_ebay_com.skp_1.1')
     match.append('~top25desk_ebay.skp_1.1')
     match.append('~top25desk_ebay.skp_1.1_mpd')
+  if 'Vulkan' in bot and ('Nexus5x' in bot or 'GTX660' in bot):
+    # skia:8523 skia:9271
+    match.append('~compositing_images')
   if 'MacBook10.1' in bot and 'CommandBuffer' in bot:
     match.append('~^desk_micrographygirlsvg.skp_1.1$')
-  if 'IntelIris655' in bot and 'Win10' in bot and 'Vulkan' in bot:
-    # skia:8587
-    match.append('~^GM_varied_text_clipped_lcd$')
-    match.append('~^GM_varied_text_ignorable_clip_lcd$')
-    match.append('~^fontscaler_lcd$')
-    match.append('~^rotated_rects_aa_changing_transparent_src$')
-    match.append('~^rotated_rects_aa_same_transparent_src$')
-    match.append('~^srcmode_rects_1_aa$')
-    match.append('~^desk_skbug6850overlay2.skp_1$')
-    match.append('~^desk_skbug6850overlay2.skp_1.1$')
-    match.append('~^desk_skbug6850overlay2.skp_1.1_mpd$')
-    match.append('~^desk_skbug6850overlay2.skp_1_mpd$')
-    # skia:8659
-    match.append('~^blendmode_mask_DstATop$')
-    match.append('~^blendmode_mask_Src$')
-    match.append('~^blendmode_mask_SrcIn$')
-    match.append('~^blendmode_mask_SrcOut$')
-    match.append('~^desk_carsvg.skp_1$')
-    match.append('~^desk_carsvg.skp_1.1$')
-    match.append('~^desk_carsvg.skp_1.1_mpd$')
-    match.append('~^desk_carsvg.skp_1_mpd$')
-    match.append('~^desk_googlespreadsheet.skp_1$')
-    match.append('~^desk_googlespreadsheet.skp_1.1$')
-    match.append('~^desk_googlespreadsheet.skp_1.1_mpd$')
-    match.append('~^desk_googlespreadsheet.skp_1_mpd$')
-    if 'Release' in bot:
-      match.append('~^rotated_rects_aa_alternating_transparent_and_opaque_src$')
-      match.append('~^shadermask_LCD_FF$')
-      match.append('~^text_16_LCD_88$')
-      match.append('~^text_16_LCD_BK$')
-      match.append('~^text_16_LCD_FF$')
-      match.append('~^text_16_LCD_WT$')
   if ('ASAN' in bot or 'UBSAN' in bot) and 'CPU' in bot:
     # floor2int_undef benches undefined behavior, so ASAN correctly complains.
     match.append('~^floor2int_undef$')
-  if (('Iris655' in bot or 'Iris540' in bot) and 'Release' in bot and
-      'Win10' in bot and 'Vulkan' not in bot and 'ANGLE' not in bot):
-    # skia:8706
-    match.append('~^top25desk_techcrunch.skp_1_mpd$')
-    match.append('~^top25desk_techcrunch.skp_1$')
-    match.append('~^top25desk_techcrunch.skp_1.1_mpd$')
-    match.append('~^top25desk_techcrunch.skp_1.1$')
-    # skia:skia:8706
-    match.append('~^mobi_wsj.skp_1_mpd$')
-    match.append('~^mobi_wsj.skp_1$')
-    match.append('~^mobi_wsj.skp_1.1_mpd$')
-    match.append('~^mobi_wsj.skp_1.1$')
+  if 'AcerChromebook13_CB5_311-GPU-TegraK1' in bot:
+    # skia:7551
+    match.append('~^shapes_rrect_inner_rrect_50_500x500$')
 
   # We do not need or want to benchmark the decodes of incomplete images.
   # In fact, in nanobench we assert that the full image decode succeeds.
@@ -342,6 +313,8 @@ def perf_steps(api):
       '~shapes_rrect_inner_rrect_50_500x500', # skia:7551
       '~compositing_images',
     ])
+    if 'Debug' in api.vars.builder_name:
+      args.extend(['--loops', '1'])
 
   if upload_perf_results(b):
     now = api.time.utcnow()
@@ -397,8 +370,11 @@ TEST_BUILDERS = [
   'Perf-Android-Clang-Nexus5-GPU-Adreno330-arm-Debug-All-Android',
   ('Perf-Android-Clang-Nexus5x-GPU-Adreno418-arm64-Release-All-'
    'Android_NoGPUThreads'),
+  'Perf-Android-Clang-Nexus5x-GPU-Adreno418-arm64-Release-All-Android_Vulkan',
   'Perf-Android-Clang-NVIDIA_Shield-GPU-TegraX1-arm64-Release-All-Android',
+  'Perf-Android-Clang-P30-GPU-MaliG76-arm64-Release-All-Android_Vulkan',
   'Perf-ChromeOS-Clang-ASUSChromebookFlipC100-GPU-MaliT764-arm-Release-All',
+  'Perf-ChromeOS-Clang-AcerChromebook13_CB5_311-GPU-TegraK1-arm-Release-All',
   'Perf-Chromecast-Clang-Chorizo-CPU-Cortex_A7-arm-Debug-All',
   'Perf-Chromecast-Clang-Chorizo-GPU-Cortex_A7-arm-Release-All',
   'Perf-Debian9-Clang-GCE-CPU-AVX2-x86_64-Debug-All',
@@ -409,15 +385,16 @@ TEST_BUILDERS = [
   ('Perf-Mac10.13-Clang-MacBook10.1-GPU-IntelHD615-x86_64-Release-All-'
    'CommandBuffer'),
   ('Perf-Mac10.13-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Release-All-'
+   'Metal'),
+  ('Perf-Mac10.13-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Release-All-'
    'MoltenVK_Vulkan'),
   ('Perf-Mac10.13-Clang-MacMini7.1-GPU-IntelIris5100-x86_64-Release-All-'
    'CommandBuffer'),
   ('Perf-Ubuntu17-GCC-Golo-GPU-QuadroP400-x86_64-Release-All-'
     'Valgrind_SK_CPU_LIMIT_SSE41'),
   'Perf-Win10-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-ANGLE',
-  'Perf-Win10-Clang-NUC8i5BEK-GPU-IntelIris655-x86_64-Release-All-Vulkan',
-  'Perf-Win10-Clang-NUC8i5BEK-GPU-IntelIris655-x86_64-Release-All',
   'Perf-iOS-Clang-iPadPro-GPU-PowerVRGT7800-arm64-Release-All',
+  'Perf-iOS-Clang-iPhone6-GPU-PowerVRGX6450-arm64-Release-All-Metal',
 ]
 
 

@@ -8,9 +8,9 @@
 #include "src/gpu/mtl/GrMtlPipelineState.h"
 
 #include "include/gpu/GrContext.h"
-#include "include/gpu/GrRenderTarget.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrPipeline.h"
+#include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrRenderTargetPriv.h"
 #include "src/gpu/GrTexturePriv.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
@@ -19,6 +19,10 @@
 #include "src/gpu/mtl/GrMtlBuffer.h"
 #include "src/gpu/mtl/GrMtlGpu.h"
 #include "src/gpu/mtl/GrMtlTexture.h"
+
+#if !__has_feature(objc_arc)
+#error This file must be compiled with Arc. Use -fobjc-arc flag
+#endif
 
 GrMtlPipelineState::SamplerBindings::SamplerBindings(const GrSamplerState& state,
                                                      GrTexture* texture,
@@ -34,8 +38,7 @@ GrMtlPipelineState::GrMtlPipelineState(
         MTLPixelFormat pixelFormat,
         const GrGLSLBuiltinUniformHandles& builtinUniformHandles,
         const UniformInfoArray& uniforms,
-        uint32_t geometryUniformBufferSize,
-        uint32_t fragmentUniformBufferSize,
+        uint32_t uniformBufferSize,
         uint32_t numSamplers,
         std::unique_ptr<GrGLSLPrimitiveProcessor> geometryProcessor,
         std::unique_ptr<GrGLSLXferProcessor> xferProcessor,
@@ -50,7 +53,7 @@ GrMtlPipelineState::GrMtlPipelineState(
         , fXferProcessor(std::move(xferProcessor))
         , fFragmentProcessors(std::move(fragmentProcessors))
         , fFragmentProcessorCnt(fragmentProcessorCnt)
-        , fDataManager(uniforms, geometryUniformBufferSize, fragmentUniformBufferSize) {
+        , fDataManager(uniforms, uniformBufferSize) {
     (void) fPixelFormat; // Suppress unused-var warning.
 }
 
@@ -110,10 +113,13 @@ void GrMtlPipelineState::setData(const GrRenderTarget* renderTarget,
 }
 
 void GrMtlPipelineState::setDrawState(id<MTLRenderCommandEncoder> renderCmdEncoder,
-                                      GrPixelConfig config, const GrXferProcessor& xferProcessor) {
+                                      const GrSwizzle& outputSwizzle,
+                                      const GrXferProcessor& xferProcessor) {
+    [renderCmdEncoder pushDebugGroup:@"setDrawState"];
     this->bind(renderCmdEncoder);
-    this->setBlendConstants(renderCmdEncoder, config, xferProcessor);
+    this->setBlendConstants(renderCmdEncoder, outputSwizzle, xferProcessor);
     this->setDepthStencilState(renderCmdEncoder);
+    [renderCmdEncoder popDebugGroup];
 }
 
 void GrMtlPipelineState::bind(id<MTLRenderCommandEncoder> renderCmdEncoder) {
@@ -163,19 +169,17 @@ static bool blend_coeff_refs_constant(GrBlendCoeff coeff) {
 }
 
 void GrMtlPipelineState::setBlendConstants(id<MTLRenderCommandEncoder> renderCmdEncoder,
-                                           GrPixelConfig config,
+                                           const GrSwizzle& swizzle,
                                            const GrXferProcessor& xferProcessor) {
     if (!renderCmdEncoder) {
         return;
     }
 
-    GrXferProcessor::BlendInfo blendInfo;
-    xferProcessor.getBlendInfo(&blendInfo);
+    const GrXferProcessor::BlendInfo& blendInfo = xferProcessor.getBlendInfo();
     GrBlendCoeff srcCoeff = blendInfo.fSrcBlend;
     GrBlendCoeff dstCoeff = blendInfo.fDstBlend;
     if (blend_coeff_refs_constant(srcCoeff) || blend_coeff_refs_constant(dstCoeff)) {
         // Swizzle the blend to match what the shader will output.
-        const GrSwizzle& swizzle = fGpu->caps()->shaderCaps()->configOutputSwizzle(config);
         SkPMColor4f blendConst = swizzle.applyTo(blendInfo.fBlendConstant);
 
         [renderCmdEncoder setBlendColorRed: blendConst.fR

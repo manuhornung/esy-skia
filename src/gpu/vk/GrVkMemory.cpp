@@ -28,7 +28,6 @@ static BufferUsage get_buffer_usage(GrVkBuffer::Type type, bool dynamic) {
             return BufferUsage::kCpuOnly;
     }
     SK_ABORT("Invalid GrVkBuffer::Type");
-    return BufferUsage::kCpuOnly; // Just returning an arbitrary value.
 }
 
 bool GrVkMemory::AllocAndBindBufferMemory(const GrVkGpu* gpu,
@@ -98,7 +97,10 @@ bool GrVkMemory::AllocAndBindImageMemory(const GrVkGpu* gpu,
     GR_VK_CALL(gpu->vkInterface(), GetImageMemoryRequirements(gpu->device(), image, &memReqs));
 
     AllocationPropertyFlags propFlags;
-    if (memReqs.size > kMaxSmallImageSize || gpu->vkCaps().shouldAlwaysUseDedicatedImageMemory()) {
+    if (gpu->protectedContext()) {
+        propFlags = AllocationPropertyFlags::kProtected;
+    } else if (memReqs.size > kMaxSmallImageSize ||
+               gpu->vkCaps().shouldAlwaysUseDedicatedImageMemory()) {
         propFlags = AllocationPropertyFlags::kDedicatedAllocation;
     } else {
         propFlags = AllocationPropertyFlags::kNone;

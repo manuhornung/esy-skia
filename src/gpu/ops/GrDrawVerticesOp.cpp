@@ -28,7 +28,7 @@ public:
 
     const char* name() const override { return "DrawVerticesOp"; }
 
-    void visitProxies(const VisitProxyFunc& func, VisitorType) const override {
+    void visitProxies(const VisitProxyFunc& func) const override {
         fHelper.visitProxies(func);
     }
 
@@ -38,8 +38,8 @@ public:
 
     FixedFunctionFlags fixedFunctionFlags() const override;
 
-    GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*, GrFSAAType,
-                                      GrClampType) override;
+    GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*,
+                                      bool hasMixedSampledCoverage, GrClampType) override;
 
 private:
     enum class ColorArrayType {
@@ -206,16 +206,17 @@ GrDrawOp::FixedFunctionFlags DrawVerticesOp::fixedFunctionFlags() const {
     return fHelper.fixedFunctionFlags();
 }
 
-GrProcessorSet::Analysis DrawVerticesOp::finalize(const GrCaps& caps, const GrAppliedClip* clip,
-                                                  GrFSAAType fsaaType, GrClampType clampType) {
+GrProcessorSet::Analysis DrawVerticesOp::finalize(
+        const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
+        GrClampType clampType) {
     GrProcessorAnalysisColor gpColor;
     if (this->requiresPerVertexColors()) {
         gpColor.setToUnknown();
     } else {
         gpColor.setToConstant(fMeshes.front().fColor);
     }
-    auto result = fHelper.finalizeProcessors(
-            caps, clip, fsaaType, clampType, GrProcessorAnalysisCoverage::kNone, &gpColor);
+    auto result = fHelper.finalizeProcessors(caps, clip, hasMixedSampledCoverage, clampType,
+                                             GrProcessorAnalysisCoverage::kNone, &gpColor);
     if (gpColor.isConstant(&fMeshes.front().fColor)) {
         fMeshes.front().fIgnoreColors = true;
         fFlags &= ~kRequiresPerVertexColors_Flag;
@@ -608,7 +609,6 @@ static uint32_t seed_vertices(GrPrimitiveType type) {
             return 4;
     }
     SK_ABORT("Incomplete switch\n");
-    return 0;
 }
 
 static uint32_t primitive_vertices(GrPrimitiveType type) {
@@ -625,7 +625,6 @@ static uint32_t primitive_vertices(GrPrimitiveType type) {
             return 4;
     }
     SK_ABORT("Incomplete switch\n");
-    return 0;
 }
 
 static SkPoint random_point(SkRandom* random, SkScalar min, SkScalar max) {
@@ -698,7 +697,7 @@ GR_DRAW_OP_TEST_DEFINE(DrawVerticesOp) {
                                                       hasIndices ? indices.count() : 0,
                                                       indices.begin());
     GrAAType aaType = GrAAType::kNone;
-    if (GrFSAAType::kUnifiedMSAA == fsaaType && random->nextBool()) {
+    if (numSamples > 1 && random->nextBool()) {
         aaType = GrAAType::kMSAA;
     }
     return GrDrawVerticesOp::Make(context, std::move(paint), std::move(vertices), nullptr, 0,

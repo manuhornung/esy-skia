@@ -78,11 +78,14 @@ protected:
         canvas.drawPaint(paint);
         SkPMColor* rgbColors = static_cast<SkPMColor*>(rgbBmp.getPixels());
 
-        SkImageInfo yinfo = SkImageInfo::MakeA8(kBmpSize, kBmpSize);
+        SkImageInfo yinfo = SkImageInfo::Make(kBmpSize, kBmpSize, kGray_8_SkColorType,
+                                              kUnpremul_SkAlphaType);
         fYUVBmps[0].allocPixels(yinfo);
-        SkImageInfo uinfo = SkImageInfo::MakeA8(kBmpSize / 2, kBmpSize / 2);
+        SkImageInfo uinfo = SkImageInfo::Make(kBmpSize / 2, kBmpSize / 2, kGray_8_SkColorType,
+                                              kUnpremul_SkAlphaType);
         fYUVBmps[1].allocPixels(uinfo);
-        SkImageInfo vinfo = SkImageInfo::MakeA8(kBmpSize / 2, kBmpSize / 2);
+        SkImageInfo vinfo = SkImageInfo::Make(kBmpSize / 2, kBmpSize / 2, kGray_8_SkColorType,
+                                              kUnpremul_SkAlphaType);
         fYUVBmps[2].allocPixels(vinfo);
         unsigned char* yPixels;
         signed char* uvPixels[2];
@@ -123,29 +126,19 @@ protected:
     }
 
     void createYUVTextures(GrContext* context, GrBackendTexture yuvTextures[3]) {
-        GrGpu* gpu = context->priv().getGpu();
-        if (!gpu) {
-            return;
-        }
-
         for (int i = 0; i < 3; ++i) {
             SkASSERT(fYUVBmps[i].width() == SkToInt(fYUVBmps[i].rowBytes()));
-            yuvTextures[i] = gpu->createTestingOnlyBackendTexture(fYUVBmps[i].width(),
-                                                                  fYUVBmps[i].height(),
-                                                                  kAlpha_8_SkColorType,
-                                                                  GrMipMapped::kNo,
+            yuvTextures[i] = context->priv().createBackendTexture(&fYUVBmps[i].pixmap(), 1,
                                                                   GrRenderable::kNo,
-                                                                  fYUVBmps[i].getPixels());
+                                                                  GrProtected::kNo);
         }
-        context->resetContext();
     }
 
     void createResultTexture(GrContext* context, int width, int height,
                              GrBackendTexture* resultTexture) {
-        *resultTexture = context->priv().createBackendTexture(
-                width, height, kRGBA_8888_SkColorType, GrMipMapped::kNo, GrRenderable::kYes);
-
-        context->resetContext();
+        *resultTexture = context->createBackendTexture(
+                width, height, kRGBA_8888_SkColorType, SkColors::kTransparent,
+                GrMipMapped::kNo, GrRenderable::kYes, GrProtected::kNo);
     }
 
     void deleteBackendTextures(GrContext* context, GrBackendTexture textures[], int n) {
@@ -153,18 +146,13 @@ protected:
             return;
         }
 
-        GrGpu* gpu = context->priv().getGpu();
-        if (!gpu) {
-            return;
-        }
+        GrFlushInfo flushInfo;
+        flushInfo.fFlags = kSyncCpu_GrFlushFlag;
+        context->flush(flushInfo);
 
-        context->flush();
-        gpu->testingOnly_flushGpuAndSync();
         for (int i = 0; i < n; ++i) {
-            context->priv().deleteBackendTexture(textures[i]);
+            context->deleteBackendTexture(textures[i]);
         }
-
-        context->resetContext();
     }
 
     void onDraw(GrContext* context, GrRenderTargetContext*, SkCanvas* canvas) override {

@@ -66,6 +66,17 @@
 #  define SK_SUPPORT_GPU 1
 #endif
 
+/**
+ * If GPU is enabled but no GPU backends are enabled then enable GL by default.
+ * Traditionally clients have relied on Skia always building with the GL backend
+ * and opting in to additional backends. TODO: Require explicit opt in for GL.
+ */
+#if SK_SUPPORT_GPU
+#  if !defined(SK_GL) && !defined(SK_VULKAN) && !defined(SK_METAL)
+#    define SK_GL
+#  endif
+#endif
+
 #if !defined(SK_SUPPORT_ATLAS_TEXT)
 #  define SK_SUPPORT_ATLAS_TEXT 0
 #elif SK_SUPPORT_ATLAS_TEXT && !SK_SUPPORT_GPU
@@ -85,6 +96,14 @@
      static inline void SkNO_RETURN_HINT() {}
 #  else
 #    define SkNO_RETURN_HINT() do {} while (false)
+#  endif
+#endif
+
+#if !defined(SkUNREACHABLE)
+#  if defined(_MSC_VER) && !defined(__clang__)
+#    define SkUNREACHABLE __assume(false)
+#  else
+#    define SkUNREACHABLE __builtin_unreachable()
 #  endif
 #endif
 
@@ -114,6 +133,7 @@
        SK_DUMP_LINE_FORMAT(message); \
        SK_DUMP_GOOGLE3_STACK(); \
        sk_abort_no_print(); \
+       SkUNREACHABLE; \
     } while (false)
 #endif
 

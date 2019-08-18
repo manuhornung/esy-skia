@@ -5,22 +5,25 @@
  * found in the LICENSE file.
  */
 
-#include "include/private/GrAuditTrail.h"
+#include "src/gpu/GrRenderTargetOpList.h"
+
 #include "include/private/GrRecordingContext.h"
 #include "src/core/SkExchange.h"
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkTraceEvent.h"
+#include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrGpuCommandBuffer.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrRecordingContextPriv.h"
-#include "src/gpu/GrRect.h"
 #include "src/gpu/GrRenderTargetContext.h"
-#include "src/gpu/GrRenderTargetOpList.h"
 #include "src/gpu/GrResourceAllocator.h"
+#include "src/gpu/GrTexturePriv.h"
+#include "src/gpu/geometry/GrRect.h"
 #include "src/gpu/ops/GrClearOp.h"
 #include "src/gpu/ops/GrCopySurfaceOp.h"
+#include "src/gpu/ops/GrTransferFromOp.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -130,16 +133,15 @@ GrRenderTargetOpList::OpChain::OpChain(std::unique_ptr<GrOp> op,
     fBounds = fList.head()->bounds();
 }
 
-void GrRenderTargetOpList::OpChain::visitProxies(const GrOp::VisitProxyFunc& func,
-                                                 GrOp::VisitorType visitor) const {
+void GrRenderTargetOpList::OpChain::visitProxies(const GrOp::VisitProxyFunc& func) const {
     if (fList.empty()) {
         return;
     }
     for (const auto& op : GrOp::ChainRange<>(fList.head())) {
-        op.visitProxies(func, visitor);
+        op.visitProxies(func);
     }
     if (fDstProxy.proxy()) {
-        func(fDstProxy.proxy());
+        func(fDstProxy.proxy(), GrMipMapped::kNo);
     }
     if (fAppliedClip) {
         fAppliedClip->visitProxies(func);
@@ -354,6 +356,12 @@ GrRenderTargetOpList::GrRenderTargetOpList(sk_sp<GrOpMemoryPool> opMemoryPool,
         : INHERITED(std::move(opMemoryPool), std::move(proxy), auditTrail)
         , fLastClipStackGenID(SK_InvalidUniqueID)
         SkDEBUGCODE(, fNumClips(0)) {
+    if (GrTextureProxy* textureProxy = fTarget->asTextureProxy()) {
+        if (GrMipMapped::kYes == textureProxy->mipMapped()) {
+            textureProxy->markMipMapsDirty();
+        }
+    }
+    fTarget->setLastRenderTask(this);
 }
 
 void GrRenderTargetOpList::deleteOps() {
@@ -396,29 +404,30 @@ void GrRenderTargetOpList::dump(bool printDependencies) const {
 
 void GrRenderTargetOpList::visitProxies_debugOnly(const GrOp::VisitProxyFunc& func) const {
     for (const OpChain& chain : fOpChains) {
-        chain.visitProxies(func, GrOp::VisitorType::kOther);
+        chain.visitProxies(func);
     }
 }
 
 #endif
 
 void GrRenderTargetOpList::onPrepare(GrOpFlushState* flushState) {
-    SkASSERT(fTarget.get()->peekRenderTarget());
+    SkASSERT(fTarget->peekRenderTarget());
     SkASSERT(this->isClosed());
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-    TRACE_EVENT0("skia", TRACE_FUNC);
+    TRACE_EVENT0("skia.gpu", TRACE_FUNC);
 #endif
 
     // Loop over the ops that haven't yet been prepared.
     for (const auto& chain : fOpChains) {
         if (chain.head()) {
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-            TRACE_EVENT0("skia", chain.head()->name());
+            TRACE_EVENT0("skia.gpu", chain.head()->name());
 #endif
             GrOpFlushState::OpArgs opArgs = {
                 chain.head(),
-                fTarget.get()->asRenderTargetProxy(),
+                fTarget->asRenderTargetProxy(),
                 chain.appliedClip(),
+                fTarget.get()->asRenderTargetProxy()->outputSwizzle(),
                 chain.dstProxy()
             };
             flushState->setOpArgs(&opArgs);
@@ -466,11 +475,20 @@ bool GrRenderTargetOpList::onExecute(GrOpFlushState* flushState) {
     // no ops just to do a discard.
     if (fOpChains.empty() && GrLoadOp::kClear != fColorLoadOp &&
         GrLoadOp::kDiscard != fColorLoadOp) {
+        // TEMPORARY: We are in the process of moving GrMipMapsStatus from the texture to the proxy.
+        // During this time we want to assert that the proxy resolves mipmaps at the exact same
+        // times the old code would have. A null opList is very exceptional, and the proxy will have
+        // assumed mipmaps are dirty in this scenario. We mark them dirty here on the texture as
+        // well, in order to keep the assert passing.
+        GrTexture* tex = fTarget->peekTexture();
+        if (tex && GrMipMapped::kYes == tex->texturePriv().mipMapped()) {
+            tex->texturePriv().markMipMapsDirty();
+        }
         return false;
     }
 
-    SkASSERT(fTarget.get()->peekRenderTarget());
-    TRACE_EVENT0("skia", TRACE_FUNC);
+    SkASSERT(fTarget->peekRenderTarget());
+    TRACE_EVENT0("skia.gpu", TRACE_FUNC);
 
     // TODO: at the very least, we want the stencil store op to always be discard (at this
     // level). In Vulkan, sub-command buffers would still need to load & store the stencil buffer.
@@ -482,9 +500,9 @@ bool GrRenderTargetOpList::onExecute(GrOpFlushState* flushState) {
              !flushState->gpu()->caps()->performStencilClearsAsDraws());
     GrGpuRTCommandBuffer* commandBuffer = create_command_buffer(
                                                     flushState->gpu(),
-                                                    fTarget.get()->peekRenderTarget(),
-                                                    fTarget.get()->origin(),
-                                                    fTarget.get()->getBoundsRect(),
+                                                    fTarget->peekRenderTarget(),
+                                                    fTarget->origin(),
+                                                    fTarget->getBoundsRect(),
                                                     fColorLoadOp,
                                                     fLoadClearColor,
                                                     fStencilLoadOp);
@@ -497,13 +515,14 @@ bool GrRenderTargetOpList::onExecute(GrOpFlushState* flushState) {
             continue;
         }
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-        TRACE_EVENT0("skia", chain.head()->name());
+        TRACE_EVENT0("skia.gpu", chain.head()->name());
 #endif
 
         GrOpFlushState::OpArgs opArgs {
             chain.head(),
-            fTarget.get()->asRenderTargetProxy(),
+            fTarget->asRenderTargetProxy(),
             chain.appliedClip(),
+            fTarget.get()->asRenderTargetProxy()->outputSwizzle(),
             chain.dstProxy()
         };
 
@@ -535,38 +554,32 @@ void GrRenderTargetOpList::discard() {
     }
 }
 
-void GrRenderTargetOpList::setStencilLoadOp(GrLoadOp op) {
-    fStencilLoadOp = op;
-}
-
 void GrRenderTargetOpList::setColorLoadOp(GrLoadOp op, const SkPMColor4f& color) {
     fColorLoadOp = op;
     fLoadClearColor = color;
 }
 
-bool GrRenderTargetOpList::resetForFullscreenClear() {
+bool GrRenderTargetOpList::resetForFullscreenClear(CanDiscardPreviousOps canDiscardPreviousOps) {
     // Mark the color load op as discard (this may be followed by a clearColorOnLoad call to make
     // the load op kClear, or it may be followed by an explicit op). In the event of an absClear()
     // after a regular clear(), we could end up with a clear load op and a real clear op in the list
     // if the load op were not reset here.
     fColorLoadOp = GrLoadOp::kDiscard;
 
-    // Regardless of how the clear is implemented (native clear or a fullscreen quad), all prior ops
-    // would be overwritten, so discard them entirely. The one exception is if the opList is marked
-    // as needing a stencil buffer then there may be a prior op that writes to the stencil buffer.
-    // Although the clear will ignore the stencil buffer, following draw ops may not so we can't get
-    // rid of all the preceding ops. Beware! If we ever add any ops that have a side effect beyond
-    // modifying the stencil buffer we will need a more elaborate tracking system (skbug.com/7002).
-    // Additionally, if we previously recorded a wait op, we cannot delete the wait op. Until we
-    // track the wait ops separately from normal ops, we have to avoid clearing out any ops.
-    if (this->isEmpty() || (!fTarget.get()->asRenderTargetProxy()->needsStencil() && !fHasWaitOp)) {
+    // If we previously recorded a wait op, we cannot delete the wait op. Until we track the wait
+    // ops separately from normal ops, we have to avoid clearing out any ops in this case as well.
+    if (fHasWaitOp) {
+        canDiscardPreviousOps = CanDiscardPreviousOps::kNo;
+    }
+
+    if (CanDiscardPreviousOps::kYes == canDiscardPreviousOps || this->isEmpty()) {
         this->deleteOps();
         fDeferredProxies.reset();
 
         // If the opList is using a render target which wraps a vulkan command buffer, we can't do a
         // clear load since we cannot change the render pass that we are using. Thus we fall back to
         // making a clear op in this case.
-        return !fTarget.get()->asRenderTargetProxy()->wrapsVkSecondaryCB();
+        return !fTarget->asRenderTargetProxy()->wrapsVkSecondaryCB();
     }
 
     // Could not empty the list, so an op must be added to handle the clear
@@ -578,30 +591,42 @@ bool GrRenderTargetOpList::resetForFullscreenClear() {
 // This closely parallels GrTextureOpList::copySurface but renderTargetOpLists
 // also store the applied clip and dest proxy with the op
 bool GrRenderTargetOpList::copySurface(GrRecordingContext* context,
-                                       GrSurfaceProxy* dst,
                                        GrSurfaceProxy* src,
                                        const SkIRect& srcRect,
                                        const SkIPoint& dstPoint) {
-    SkASSERT(dst->asRenderTargetProxy() == fTarget.get());
-    std::unique_ptr<GrOp> op = GrCopySurfaceOp::Make(context, dst, src, srcRect, dstPoint);
+    std::unique_ptr<GrOp> op = GrCopySurfaceOp::Make(
+            context, fTarget.get(), src, srcRect, dstPoint);
     if (!op) {
         return false;
     }
 
-    this->addOp(std::move(op), *context->priv().caps());
+    this->addOp(std::move(op), GrTextureResolveManager(context->priv().drawingManager()),
+                *context->priv().caps());
     return true;
 }
 
-void GrRenderTargetOpList::purgeOpsWithUninstantiatedProxies() {
+void GrRenderTargetOpList::transferFrom(GrRecordingContext* context,
+                                        const SkIRect& srcRect,
+                                        GrColorType surfaceColorType,
+                                        GrColorType dstColorType,
+                                        sk_sp<GrGpuBuffer> dst,
+                                        size_t dstOffset) {
+    auto op = GrTransferFromOp::Make(context, srcRect, surfaceColorType, dstColorType,
+                                     std::move(dst), dstOffset);
+    this->addOp(std::move(op), GrTextureResolveManager(context->priv().drawingManager()),
+                *context->priv().caps());
+}
+
+void GrRenderTargetOpList::handleInternalAllocationFailure() {
     bool hasUninstantiatedProxy = false;
-    auto checkInstantiation = [&hasUninstantiatedProxy](GrSurfaceProxy* p) {
+    auto checkInstantiation = [&hasUninstantiatedProxy](GrSurfaceProxy* p, GrMipMapped) {
         if (!p->isInstantiated()) {
             hasUninstantiatedProxy = true;
         }
     };
     for (OpChain& recordedOp : fOpChains) {
         hasUninstantiatedProxy = false;
-        recordedOp.visitProxies(checkInstantiation, GrOp::VisitorType::kOther);
+        recordedOp.visitProxies(checkInstantiation);
         if (hasUninstantiatedProxy) {
             // When instantiation of the proxy fails we drop the Op
             recordedOp.deleteOps(fOpMemoryPool.get());
@@ -612,13 +637,13 @@ void GrRenderTargetOpList::purgeOpsWithUninstantiatedProxies() {
 bool GrRenderTargetOpList::onIsUsed(GrSurfaceProxy* proxyToCheck) const {
     bool used = false;
 
-    auto visit = [ proxyToCheck, &used ] (GrSurfaceProxy* p) {
+    auto visit = [ proxyToCheck, &used ] (GrSurfaceProxy* p, GrMipMapped) {
         if (p == proxyToCheck) {
             used = true;
         }
     };
     for (const OpChain& recordedOp : fOpChains) {
-        recordedOp.visitProxies(visit, GrOp::VisitorType::kOther);
+        recordedOp.visitProxies(visit);
     }
 
     return used;
@@ -651,13 +676,13 @@ void GrRenderTargetOpList::gatherProxyIntervals(GrResourceAllocator* alloc) cons
         alloc->incOps();
     }
 
-    auto gather = [ alloc SkDEBUGCODE(, this) ] (GrSurfaceProxy* p) {
+    auto gather = [ alloc SkDEBUGCODE(, this) ] (GrSurfaceProxy* p, GrMipMapped) {
         alloc->addInterval(p, alloc->curOp(), alloc->curOp(), GrResourceAllocator::ActualUse::kYes
                            SkDEBUGCODE(, fTarget.get() == p));
     };
     for (const OpChain& recordedOp : fOpChains) {
         // only diff from the GrTextureOpList version
-        recordedOp.visitProxies(gather, GrOp::VisitorType::kAllocatorGather);
+        recordedOp.visitProxies(gather);
 
         // Even though the op may have been (re)moved we still need to increment the op count to
         // keep all the math consistent.
@@ -670,7 +695,7 @@ void GrRenderTargetOpList::recordOp(
         const DstProxy* dstProxy, const GrCaps& caps) {
     SkDEBUGCODE(op->validate();)
     SkASSERT(processorAnalysis.requiresDstTexture() == (dstProxy && dstProxy->proxy()));
-    SkASSERT(fTarget.get());
+    SkASSERT(fTarget);
 
     // A closed GrOpList should never receive new/more ops
     SkASSERT(!this->isClosed());
@@ -683,7 +708,7 @@ void GrRenderTargetOpList::recordOp(
     // 1) check every op
     // 2) intersect with something
     // 3) find a 'blocker'
-    GR_AUDIT_TRAIL_ADD_OP(fAuditTrail, op.get(), fTarget.get()->uniqueID());
+    GR_AUDIT_TRAIL_ADD_OP(fAuditTrail, op.get(), fTarget->uniqueID());
     GrOP_INFO("opList: %d Recording (%s, opID: %u)\n"
               "\tBounds [L: %.2f, T: %.2f R: %.2f B: %.2f]\n",
                this->uniqueID(),

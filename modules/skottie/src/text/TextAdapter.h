@@ -9,40 +9,58 @@
 #define SkottieTextAdapter_DEFINED
 
 #include "modules/skottie/src/SkottieAdapter.h"
+#include "modules/skottie/src/text/SkottieShaper.h"
+#include "modules/skottie/src/text/TextAnimator.h"
 #include "modules/skottie/src/text/TextValue.h"
 
-namespace sksg {
-class Color;
-class Draw;
-class Group;
-class TextBlob;
-} // namespace sksg
+#include <vector>
+
+class SkFontMgr;
 
 namespace skottie {
+namespace internal {
 
 class TextAdapter final : public SkNVRefCnt<TextAdapter> {
 public:
-    explicit TextAdapter(sk_sp<sksg::Group> root);
+    TextAdapter(sk_sp<sksg::Group> root, sk_sp<SkFontMgr>, sk_sp<Logger>, bool hasAnimators);
     ~TextAdapter();
 
     ADAPTER_PROPERTY(Text, TextValue, TextValue())
 
     const sk_sp<sksg::Group>& root() const { return fRoot; }
 
+    void applyAnimators(const std::vector<sk_sp<TextAnimator>>&);
+
 private:
+    struct FragmentRec {
+        SkPoint                       fOrigin; // fragment position
+
+        sk_sp<sksg::Matrix<SkMatrix>> fMatrixNode;
+        sk_sp<sksg::Color>            fFillColorNode,
+                                      fStrokeColorNode;
+    };
+
+    void addFragment(const Shaper::Fragment&);
+    void buildDomainMaps(const Shaper::Result&);
+
     void apply();
 
-    sk_sp<sksg::Group>     fRoot;
-    sk_sp<sksg::TextBlob>  fTextNode;
-    sk_sp<sksg::Color>     fFillColor,
-                           fStrokeColor;
-    sk_sp<sksg::Draw>      fFillNode,
-                           fStrokeNode;
+    void pushPropsToFragment(const TextAnimator::AnimatedProps&, const FragmentRec&) const;
 
-    bool                   fHadFill   : 1, //  - state cached from the prev apply()
-                           fHadStroke : 1; //  /
+    void adjustLineTracking(const TextAnimator::ModulatorBuffer&,
+                            const TextAnimator::DomainSpan&,
+                            float line_tracking) const;
+
+    const sk_sp<sksg::Group> fRoot;
+    const sk_sp<SkFontMgr>   fFontMgr;
+    sk_sp<Logger>            fLogger;
+    const bool               fHasAnimators;
+
+    std::vector<FragmentRec> fFragments;
+    TextAnimator::DomainMaps fMaps;
 };
 
+} // namespace internal
 } // namespace skottie
 
 #endif // SkottieTextAdapter_DEFINED

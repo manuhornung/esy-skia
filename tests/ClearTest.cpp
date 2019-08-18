@@ -18,10 +18,11 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrContext.h"
 #include "include/gpu/GrContextOptions.h"
-#include "include/private/GrColor.h"
 #include "include/private/GrTypesPriv.h"
 #include "include/private/SkColorData.h"
+#include "src/core/SkAutoPixmapStorage.h"
 #include "src/gpu/GrCaps.h"
+#include "src/gpu/GrColor.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
 #include "tests/Test.h"
@@ -35,18 +36,21 @@ static bool check_rect(GrRenderTargetContext* rtc, const SkIRect& rect, uint32_t
                        uint32_t* actualValue, int* failX, int* failY) {
     int w = rect.width();
     int h = rect.height();
-    std::unique_ptr<uint32_t[]> pixels(new uint32_t[w * h]);
-    memset(pixels.get(), ~expectedValue, sizeof(uint32_t) * w * h);
 
     SkImageInfo dstInfo = SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
 
-    if (!rtc->readPixels(dstInfo, pixels.get(), 0, rect.fLeft, rect.fTop)) {
+    SkAutoPixmapStorage readback;
+    readback.alloc(dstInfo);
+
+    readback.erase(~expectedValue);
+    if (!rtc->readPixels(readback.info(), readback.writable_addr(), readback.rowBytes(),
+                         {rect.fLeft, rect.fTop})) {
         return false;
     }
 
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
-            uint32_t pixel = pixels.get()[y * w + x];
+            uint32_t pixel = readback.addr32()[y * w + x];
             if (pixel != expectedValue) {
                 *actualValue = pixel;
                 *failX = x + rect.fLeft;
@@ -59,10 +63,8 @@ static bool check_rect(GrRenderTargetContext* rtc, const SkIRect& rect, uint32_t
 }
 
 sk_sp<GrRenderTargetContext> newRTC(GrContext* context, int w, int h) {
-    const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
-    return context->priv().makeDeferredRenderTargetContext(format, SkBackingFit::kExact, w, h,
-                                                           kRGBA_8888_GrPixelConfig, nullptr);
+    return context->priv().makeDeferredRenderTargetContext(SkBackingFit::kExact, w, h,
+                                                           GrColorType::kRGBA_8888, nullptr);
 }
 
 static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {

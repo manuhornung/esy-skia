@@ -22,7 +22,6 @@
 #include "include/core/SkTypes.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrContext.h"
-#include "include/private/GrTextureProxy.h"
 #include "include/private/GrTypesPriv.h"
 #include "include/private/SkColorData.h"
 #include "src/core/SkClipOpPriv.h"
@@ -38,6 +37,7 @@
 #include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrRenderTargetContextPriv.h"
 #include "src/gpu/GrStencilClip.h"
+#include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/GrUserStencilSettings.h"
 #include "src/gpu/effects/GrTextureDomain.h"
 #include "tools/ToolUtils.h"
@@ -214,7 +214,7 @@ DrawResult WindowRectanglesMaskGM::onCoverClipStack(const SkClipStack& stack, Sk
     const GrReducedClip reducedClip(stack, SkRect::Make(kCoverRect), rtc->caps(), kNumWindows);
 
     GrPaint paint;
-    if (GrFSAAType::kNone == rtc->fsaaType()) {
+    if (rtc->numSamples() <= 1) {
         paint.setColor4f({ 0, 0.25f, 1, 1 });
         this->visualizeAlphaMask(ctx, rtc, reducedClip, std::move(paint));
     } else {
@@ -228,14 +228,9 @@ void WindowRectanglesMaskGM::visualizeAlphaMask(GrContext* ctx, GrRenderTargetCo
                                                 const GrReducedClip& reducedClip, GrPaint&& paint) {
     const int padRight = (kDeviceRect.right() - kCoverRect.right()) / 2;
     const int padBottom = (kDeviceRect.bottom() - kCoverRect.bottom()) / 2;
-    const GrBackendFormat format =
-            ctx->priv().caps()->getBackendFormatFromColorType(kAlpha_8_SkColorType);
-    sk_sp<GrRenderTargetContext> maskRTC(
-        ctx->priv().makeDeferredRenderTargetContextWithFallback(
-                                                         format, SkBackingFit::kExact,
-                                                         kCoverRect.width() + padRight,
-                                                         kCoverRect.height() + padBottom,
-                                                         kAlpha_8_GrPixelConfig, nullptr));
+    sk_sp<GrRenderTargetContext> maskRTC(ctx->priv().makeDeferredRenderTargetContextWithFallback(
+            SkBackingFit::kExact, kCoverRect.width() + padRight, kCoverRect.height() + padBottom,
+            GrColorType::kAlpha_8, nullptr));
     if (!maskRTC) {
         return;
     }
@@ -244,9 +239,11 @@ void WindowRectanglesMaskGM::visualizeAlphaMask(GrContext* ctx, GrRenderTargetCo
     // the clip mask generation.
     this->stencilCheckerboard(maskRTC.get(), true);
     maskRTC->clear(nullptr, SK_PMColor4fWHITE, GrRenderTargetContext::CanClearFullscreen::kYes);
-    maskRTC->priv().drawAndStencilRect(make_stencil_only_clip(), &GrUserStencilSettings::kUnused,
-                                       SkRegion::kDifference_Op, false, GrAA::kNo, SkMatrix::I(),
-                                       SkRect::MakeIWH(maskRTC->width(), maskRTC->height()));
+    GrPaint stencilPaint;
+    stencilPaint.setCoverageSetOpXPFactory(SkRegion::kDifference_Op, false);
+    maskRTC->priv().stencilRect(make_stencil_only_clip(), &GrUserStencilSettings::kUnused,
+                                std::move(stencilPaint), GrAA::kNo, SkMatrix::I(),
+                                SkRect::MakeIWH(maskRTC->width(), maskRTC->height()));
     reducedClip.drawAlphaClipMask(maskRTC.get());
 
     int x = kCoverRect.x() - kDeviceRect.x(),
@@ -291,8 +288,10 @@ void WindowRectanglesMaskGM::stencilCheckerboard(GrRenderTargetContext* rtc, boo
         for (int x = (y & 1) == flip ? 0 : kMaskCheckerSize;
              x < kDeviceRect.width(); x += 2 * kMaskCheckerSize) {
             SkIRect checker = SkIRect::MakeXYWH(x, y, kMaskCheckerSize, kMaskCheckerSize);
-            rtc->priv().stencilRect(
-                    GrNoClip(), &kSetClip, GrAA::kNo, SkMatrix::I(), SkRect::Make(checker));
+            GrPaint paint;
+            paint.setXPFactory(GrDisableColorXPFactory::Get());
+            rtc->priv().stencilRect(GrNoClip(), &kSetClip, std::move(paint), GrAA::kNo,
+                                    SkMatrix::I(), SkRect::Make(checker));
         }
     }
 }

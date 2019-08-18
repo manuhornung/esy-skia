@@ -68,6 +68,8 @@ public:
                          const SkVertices::BoneWeights boneWeights[], SkBlendMode bmode,
                          const uint16_t indices[], int ptCount,
                          const SkPaint& paint, const SkVertices::Bone bones[], int boneCount) const;
+    void  drawAtlas(const SkImage*, const SkRSXform[], const SkRect[], const SkColor[], int count,
+                    SkBlendMode, const SkPaint&);
 
     /**
      *  Overwrite the target with the path's coverage (i.e. its mask).
@@ -122,10 +124,8 @@ public:
     static RectType ComputeRectType(const SkPaint&, const SkMatrix&,
                                     SkPoint* strokeSize);
 
-    static bool ShouldDrawTextAsPaths(const SkFont&, const SkPaint&, const SkMatrix&,
-                                      SkScalar sizeLimit = 1024);
-
     static SkScalar ComputeResScaleForStroking(const SkMatrix& );
+
 private:
     void drawBitmapAsMask(const SkBitmap&, const SkPaint&) const;
 

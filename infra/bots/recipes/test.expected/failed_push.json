@@ -21,7 +21,6 @@
       "import os\nprint os.environ.get('SWARMING_BOT_ID', '')\n"
     ],
     "name": "get swarming bot id",
-    "stdout": "/path/to/tmp/",
     "~followup_annotations": [
       "@@@STEP_LOG_LINE@python.inline@import os@@@",
       "@@@STEP_LOG_LINE@python.inline@print os.environ.get('SWARMING_BOT_ID', '')@@@",
@@ -124,7 +123,11 @@
       "/home/chrome-bot/build123-m2--device5.force_quarantine"
     ],
     "infra_step": true,
-    "name": "Quarantining Bot"
+    "name": "Quarantining Bot",
+    "~followup_annotations": [
+      "@@@STEP_LOG_LINE@build123-m2--device5.force_quarantine@ @@@",
+      "@@@STEP_LOG_END@build123-m2--device5.force_quarantine@@@"
+    ]
   },
   {
     "cmd": [
@@ -142,12 +145,7 @@
   },
   {
     "failure": {
-      "exception": {
-        "traceback": [
-          "<omitted by recipe engine>"
-        ]
-      },
-      "humanReason": "Infra Failure: Step('push [START_DIR]/skia/resources/* /sdcard/revenge_of_the_skiabot/resources') returned 1"
+      "humanReason": "Infra Failure: Step('push [START_DIR]/skia/resources/* /sdcard/revenge_of_the_skiabot/resources') (retcode: 1)"
     },
     "name": "$result"
   }

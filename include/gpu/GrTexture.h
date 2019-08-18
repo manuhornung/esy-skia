@@ -13,7 +13,6 @@
 #include "include/core/SkPoint.h"
 #include "include/core/SkRefCnt.h"
 #include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrSamplerState.h"
 #include "include/gpu/GrSurface.h"
 #include "include/private/GrTypesPriv.h"
 
@@ -81,7 +80,7 @@ public:
     inline const GrTexturePriv texturePriv() const;
 
 protected:
-    GrTexture(GrGpu*, const GrSurfaceDesc&, GrTextureType, GrMipMapsStatus);
+    GrTexture(GrGpu*, const SkISize&, GrPixelConfig, GrProtected, GrTextureType, GrMipMapsStatus);
 
     virtual bool onStealBackendTexture(GrBackendTexture*, SkImage::BackendTextureReleaseProc*) = 0;
 

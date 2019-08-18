@@ -24,6 +24,7 @@ public:
         fMaxRenderTargetSize = SkTMin(options.fMaxRenderTargetSize, fMaxTextureSize);
         fMaxPreferredRenderTargetSize = fMaxRenderTargetSize;
         fMaxVertexAttributes = options.fMaxVertexAttributes;
+        fSampleLocationsSupport = true;
 
         fShaderCaps.reset(new GrShaderCaps(contextOptions));
         fShaderCaps->fGeometryShaderSupport = options.fGeometryShaderSupport;
@@ -32,20 +33,54 @@ public:
         fShaderCaps->fMaxFragmentSamplers = options.fMaxFragmentSamplers;
         fShaderCaps->fShaderDerivativeSupport = options.fShaderDerivativeSupport;
         fShaderCaps->fDualSourceBlendingSupport = options.fDualSourceBlendingSupport;
+        fShaderCaps->fSampleVariablesSupport = true;
+        fShaderCaps->fSampleVariablesStencilSupport = true;
 
         this->applyOptionsOverrides(contextOptions);
     }
-    bool isConfigTexturable(GrPixelConfig config) const override {
-        return fOptions.fConfigOptions[config].fTexturable;
+
+    bool isFormatSRGB(const GrBackendFormat& format) const override {
+        auto ct = format.asMockColorType();
+        return GrGetColorTypeDesc(ct).encoding() == GrColorTypeEncoding::kSRGBUnorm;
     }
 
-    bool isConfigCopyable(GrPixelConfig config) const override {
+    // Mock caps doesn't support any compressed formats right now
+    bool isFormatCompressed(const GrBackendFormat&) const override {
         return false;
     }
 
-    int getRenderTargetSampleCount(int requestCount, GrPixelConfig config) const override {
+    bool isFormatTexturableAndUploadable(GrColorType,
+                                         const GrBackendFormat& format) const override {
+        return this->isFormatTexturable(format);
+    }
+    bool isFormatTexturable(const GrBackendFormat& format) const override {
+        auto index = static_cast<int>(format.asMockColorType());
+        return fOptions.fConfigOptions[index].fTexturable;
+    }
+
+    bool isFormatCopyable(const GrBackendFormat& format) const override {
+        return false;
+    }
+
+    bool isFormatAsColorTypeRenderable(GrColorType ct, const GrBackendFormat& format,
+                                       int sampleCount = 1) const override {
+        // Currently we don't allow RGB_888X to be renderable because we don't have a way to
+        // handle blends that reference dst alpha when the values in the dst alpha channel are
+        // uninitialized.
+        if (ct == GrColorType::kRGB_888x) {
+            return false;
+        }
+        return this->isFormatRenderable(format, sampleCount);
+    }
+
+    bool isFormatRenderable(const GrBackendFormat& format, int sampleCount) const override {
+        return sampleCount <= this->maxRenderTargetSampleCount(format.asMockColorType());
+    }
+
+    int getRenderTargetSampleCount(int requestCount, GrColorType ct) const {
         requestCount = SkTMax(requestCount, 1);
-        switch (fOptions.fConfigOptions[config].fRenderability) {
+
+        switch (fOptions.fConfigOptions[(int)ct].fRenderability) {
             case GrMockOptions::ConfigOptions::Renderability::kNo:
                 return 0;
             case GrMockOptions::ConfigOptions::Renderability::kNonMSAA:
@@ -56,8 +91,13 @@ public:
         return 0;
     }
 
-    int maxRenderTargetSampleCount(GrPixelConfig config) const override {
-        switch (fOptions.fConfigOptions[config].fRenderability) {
+    int getRenderTargetSampleCount(int requestCount,
+                                   const GrBackendFormat& format) const override {
+        return this->getRenderTargetSampleCount(requestCount, format.asMockColorType());
+    }
+
+    int maxRenderTargetSampleCount(GrColorType ct) const {
+        switch (fOptions.fConfigOptions[(int)ct].fRenderability) {
             case GrMockOptions::ConfigOptions::Renderability::kNo:
                 return 0;
             case GrMockOptions::ConfigOptions::Renderability::kNonMSAA:
@@ -68,43 +108,30 @@ public:
         return 0;
     }
 
-    bool surfaceSupportsReadPixels(const GrSurface*) const override { return true; }
-
-    bool initDescForDstCopy(const GrRenderTargetProxy* src, GrSurfaceDesc* desc, GrSurfaceOrigin*,
-                            bool* rectsMustMatch, bool* disallowSubrect) const override {
-        return false;
+    int maxRenderTargetSampleCount(const GrBackendFormat& format) const override {
+        return this->maxRenderTargetSampleCount(format.asMockColorType());
     }
 
-    GrPixelConfig validateBackendRenderTarget(const GrBackendRenderTarget&,
-                                              SkColorType) const override {
-        return kUnknown_GrPixelConfig;
+    SupportedWrite supportedWritePixelsColorType(GrColorType surfaceColorType,
+                                                 const GrBackendFormat& surfaceFormat,
+                                                 GrColorType srcColorType) const override {
+        return {surfaceColorType, 1};
     }
 
-    GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat& format,
-                                             SkColorType ct) const override {
-        const GrPixelConfig* mockFormat = format.getMockFormat();
-        if (!mockFormat) {
-            return kUnknown_GrPixelConfig;
-        }
-        return *mockFormat;
+    SurfaceReadPixelsSupport surfaceSupportsReadPixels(const GrSurface*) const override {
+        return SurfaceReadPixelsSupport::kSupported;
     }
 
-    GrPixelConfig getYUVAConfigFromBackendFormat(const GrBackendFormat& format) const override {
-        const GrPixelConfig* mockFormat = format.getMockFormat();
-        if (!mockFormat) {
-            return kUnknown_GrPixelConfig;
-        }
-        return *mockFormat;
+    GrColorType getYUVAColorTypeFromBackendFormat(const GrBackendFormat& format,
+                                                  bool isAlphaChannel) const override {
+        return format.asMockColorType();
     }
 
-    GrBackendFormat getBackendFormatFromGrColorType(GrColorType ct,
-                                                    GrSRGBEncoded srgbEncoded) const override {
-        GrPixelConfig config = GrColorTypeToPixelConfig(ct, srgbEncoded);
-        if (config == kUnknown_GrPixelConfig) {
-            return GrBackendFormat();
-        }
-        return GrBackendFormat::MakeMock(config);
+    GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const override {
+        return {};
     }
+
+    bool canClearTextureOnCreation() const override { return true; }
 
     GrSwizzle getTextureSwizzle(const GrBackendFormat&, GrColorType) const override {
         return GrSwizzle();
@@ -113,15 +140,37 @@ public:
         return GrSwizzle();
     }
 
+#if GR_TEST_UTILS
+    std::vector<GrCaps::TestFormatColorTypeCombination> getTestingCombinations() const override;
+#endif
+
 private:
     bool onSurfaceSupportsWritePixels(const GrSurface*) const override { return true; }
     bool onCanCopySurface(const GrSurfaceProxy* dst, const GrSurfaceProxy* src,
                           const SkIRect& srcRect, const SkIPoint& dstPoint) const override {
         return true;
     }
-    size_t onTransferFromOffsetAlignment(GrColorType bufferColorType) const override {
-        // arbitrary
-        return GrSizeAlignUp(GrColorTypeBytesPerPixel(bufferColorType), 4);
+    GrBackendFormat onGetDefaultBackendFormat(GrColorType ct, GrRenderable) const override {
+        return GrBackendFormat::MakeMock(ct);
+    }
+
+    GrPixelConfig onGetConfigFromBackendFormat(const GrBackendFormat& format,
+                                               GrColorType) const override {
+        return GrColorTypeToPixelConfig(format.asMockColorType());
+    }
+
+    bool onAreColorTypeAndFormatCompatible(GrColorType ct,
+                                           const GrBackendFormat& format) const override {
+        if (ct == GrColorType::kUnknown) {
+            return false;
+        }
+
+        return ct == format.asMockColorType();
+    }
+
+    SupportedRead onSupportedReadPixelsColorType(GrColorType srcColorType, const GrBackendFormat&,
+                                                 GrColorType) const override {
+        return SupportedRead{srcColorType, 1};
     }
 
     static const int kMaxSampleCnt = 16;

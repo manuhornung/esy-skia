@@ -101,7 +101,7 @@ private:
         uint32_t extraSamplerKey = gpu->getExtraSamplerKeyForProgram(samplerState,
                                                                      proxy->backendFormat());
 
-        fSampler.reset(proxy->textureType(), proxy->config(), samplerState,
+        fSampler.reset(proxy->textureType(), samplerState, proxy->textureSwizzle(),
                        extraSamplerKey);
         this->setTextureSamplerCnt(1);
         fInPosition = {"position", kFloat2_GrVertexAttribType, kFloat2_GrSLType};
@@ -170,8 +170,9 @@ public:
 
     const char* name() const override { return "NonAALatticeOp"; }
 
-    void visitProxies(const VisitProxyFunc& func, VisitorType) const override {
-        func(fProxy.get());
+    void visitProxies(const VisitProxyFunc& func) const override {
+        bool mipped = (GrSamplerState::Filter::kMipMap == fFilter);
+        func(fProxy.get(), GrMipMapped(mipped));
         fHelper.visitProxies(func);
     }
 
@@ -193,15 +194,16 @@ public:
 
     FixedFunctionFlags fixedFunctionFlags() const override { return fHelper.fixedFunctionFlags(); }
 
-    GrProcessorSet::Analysis finalize(const GrCaps& caps, const GrAppliedClip* clip,
-                                      GrFSAAType fsaaType, GrClampType clampType) override {
+    GrProcessorSet::Analysis finalize(
+            const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
+            GrClampType clampType) override {
         auto opaque = fPatches[0].fColor.isOpaque() && GrPixelConfigIsOpaque(fProxy->config())
                               ? GrProcessorAnalysisColor::Opaque::kYes
                               : GrProcessorAnalysisColor::Opaque::kNo;
         auto analysisColor = GrProcessorAnalysisColor(opaque);
-        auto result = fHelper.finalizeProcessors(caps, clip, fsaaType, clampType,
-                                                 GrProcessorAnalysisCoverage::kNone,
-                                                 &analysisColor);
+        auto result = fHelper.finalizeProcessors(
+                caps, clip, hasMixedSampledCoverage, clampType, GrProcessorAnalysisCoverage::kNone,
+                &analysisColor);
         analysisColor.isConstant(&fPatches[0].fColor);
         fWideColor = SkPMColor4fNeedsWideColor(fPatches[0].fColor, clampType, caps);
         return result;
@@ -402,12 +404,14 @@ GR_DRAW_OP_TEST_DEFINE(NonAALatticeOp) {
     desc.fConfig = kRGBA_8888_GrPixelConfig;
     desc.fWidth = random->nextRangeU(1, 1000);
     desc.fHeight = random->nextRangeU(1, 1000);
-    GrSurfaceOrigin origin =
-            random->nextBool() ? kTopLeft_GrSurfaceOrigin : kBottomLeft_GrSurfaceOrigin;
+    GrSurfaceOrigin origin = random->nextBool() ? kTopLeft_GrSurfaceOrigin
+                                                : kBottomLeft_GrSurfaceOrigin;
     const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
-    auto proxy = context->priv().proxyProvider()->createProxy(
-            format, desc, origin, SkBackingFit::kExact, SkBudgeted::kYes);
+            context->priv().caps()->getDefaultBackendFormat(GrColorType::kRGBA_8888,
+                                                            GrRenderable::kNo);
+    auto proxy = context->priv().proxyProvider()->createProxy(format, desc, GrRenderable::kNo, 1,
+                                                              origin, SkBackingFit::kExact,
+                                                              SkBudgeted::kYes, GrProtected::kNo);
 
     do {
         if (random->nextBool()) {

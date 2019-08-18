@@ -29,6 +29,23 @@ struct SkImageInfo;
 class SkPaint;
 class SkRasterPipeline;
 
+/**
+ *  Shaders can optionally return a subclass of this when appending their stages.
+ *  Doing so tells the caller that the stages can be reused with different CTMs (but nothing
+ *  else can change), by calling the updater's udpate() method before each use.
+ *
+ *  This can be a perf-win bulk draws like drawAtlas and drawVertices, where most of the setup
+ *  (i.e. uniforms) are constant, and only something small is changing (i.e. matrices). This
+ *  reuse skips the cost of computing the stages (and/or avoids having to allocate a separate
+ *  shader for each small draw.
+ */
+class SkStageUpdater {
+public:
+    virtual ~SkStageUpdater() {}
+
+    virtual bool update(const SkMatrix& ctm, const SkMatrix* localM) = 0;
+};
+
 class SkShaderBase : public SkShader {
 public:
     ~SkShaderBase() override;
@@ -167,6 +184,7 @@ public:
     virtual SkImage* onIsAImage(SkMatrix*, SkTileMode[2]) const {
         return nullptr;
     }
+    virtual SkPicture* isAPicture(SkMatrix*, SkTileMode[2], SkRect* tile) const { return nullptr; }
 
     static Type GetFlattenableType() { return kSkShaderBase_Type; }
     Type getFlattenableType() const override { return GetFlattenableType(); }
@@ -184,6 +202,10 @@ public:
      */
     virtual sk_sp<SkShader> makeAsALocalMatrixShader(SkMatrix* localMatrix) const;
 
+    SkStageUpdater* appendUpdatableStages(const SkStageRec& rec) const {
+        return this->onAppendUpdatableStages(rec);
+    }
+
 protected:
     SkShaderBase(const SkMatrix* localMatrix = nullptr);
 
@@ -197,13 +219,6 @@ protected:
     virtual Context* onMakeContext(const ContextRec&, SkArenaAlloc*) const {
         return nullptr;
     }
-
-    /**
-     * Overriden by shaders which prefer burst mode.
-     */
-    virtual Context* onMakeBurstPipelineContext(const ContextRec&, SkArenaAlloc*) const {
-        return nullptr;
-    }
 #endif
 
     virtual bool onAsLuminanceColor(SkColor*) const {
@@ -212,6 +227,8 @@ protected:
 
     // Default impl creates shadercontext and calls that (not very efficient)
     virtual bool onAppendStages(const SkStageRec&) const;
+
+    virtual SkStageUpdater* onAppendUpdatableStages(const SkStageRec&) const { return nullptr; }
 
 private:
     // This is essentially const, but not officially so it can be modified in constructors.

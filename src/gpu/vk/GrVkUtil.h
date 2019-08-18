@@ -10,8 +10,9 @@
 
 #include "include/gpu/GrTypes.h"
 #include "include/gpu/vk/GrVkTypes.h"
-#include "include/private/GrColor.h"
 #include "include/private/SkMacros.h"
+#include "src/gpu/GrColor.h"
+#include "src/gpu/GrDataUtils.h"
 #include "src/gpu/vk/GrVkInterface.h"
 #include "src/sksl/ir/SkSLProgram.h"
 
@@ -28,18 +29,15 @@ class GrVkGpu;
 #define GR_VK_CALL_ERRCHECK(IFACE, X)  (void) GR_VK_CALL(IFACE, X)
 #endif
 
-/**
- * Returns the vulkan texture format for the given GrPixelConfig
- */
-bool GrPixelConfigToVkFormat(GrPixelConfig config, VkFormat* format);
-
 bool GrVkFormatIsSupported(VkFormat);
+
+bool GrVkFormatNeedsYcbcrSampler(VkFormat format);
 
 #ifdef SK_DEBUG
 /**
- * Returns true if the passed in VkFormat and GrPixelConfig are compatible with each other.
+ * Returns true if the passed in VkFormat and GrColorType are compatible with each other.
  */
-bool GrVkFormatPixelConfigPairIsValid(VkFormat, GrPixelConfig);
+bool GrVkFormatColorTypePairIsValid(VkFormat, GrColorType);
 #endif
 
 bool GrSampleCountToVkSampleCount(uint32_t samples, VkSampleCountFlagBits* vkSamples);
@@ -67,8 +65,35 @@ size_t GrVkBytesPerFormat(VkFormat);
 bool GrVkFormatIsCompressed(VkFormat);
 
 /**
- * Returns the data size for the given compressed format
+ * Maps a vk format into the CompressionType enum if applicable.
  */
-size_t GrVkFormatCompressedDataSize(VkFormat, int width, int height);
+bool GrVkFormatToCompressionType(VkFormat vkFormat, SkImage::CompressionType* compressionType);
 
+#if GR_TEST_UTILS
+static constexpr const char* GrVkFormatToStr(VkFormat vkFormat) {
+    switch (vkFormat) {
+        case VK_FORMAT_R8G8B8A8_UNORM:           return "R8G8B8A8_UNORM";
+        case VK_FORMAT_R8_UNORM:                 return "R8_UNORM";
+        case VK_FORMAT_B8G8R8A8_UNORM:           return "B8G8R8A8_UNORM";
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:      return "R5G6B5_UNORM_PACK16";
+        case VK_FORMAT_R16G16B16A16_SFLOAT:      return "R16G16B16A16_SFLOAT";
+        case VK_FORMAT_R16_SFLOAT:               return "R16_SFLOAT";
+        case VK_FORMAT_R8G8B8_UNORM:             return "R8G8B8_UNORM";
+        case VK_FORMAT_R8G8_UNORM:               return "R8G8_UNORM";
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32: return "A2B10G10R10_UNORM_PACK32";
+        case VK_FORMAT_B4G4R4A4_UNORM_PACK16:    return "B4G4R4A4_UNORM_PACK16";
+        case VK_FORMAT_R4G4B4A4_UNORM_PACK16:    return "R4G4B4A4_UNORM_PACK16";
+        case VK_FORMAT_R32G32B32A32_SFLOAT:      return "R32G32B32A32_SFLOAT";
+        case VK_FORMAT_R8G8B8A8_SRGB:            return "R8G8B8A8_SRGB";
+        case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:  return "ETC2_R8G8B8_UNORM_BLOCK";
+        case VK_FORMAT_R16_UNORM:                return "R16_UNORM";
+        case VK_FORMAT_R16G16_UNORM:             return "R16G16_UNORM";
+        case VK_FORMAT_R16G16B16A16_UNORM:       return "R16G16B16A16_UNORM";
+        case VK_FORMAT_R16G16_SFLOAT:            return "R16G16_SFLOAT";
+
+        default:                                 return "Unknown";
+    }
+}
+
+#endif
 #endif

@@ -15,10 +15,9 @@ namespace sk_app {
 
 Window::Window() {}
 
-void Window::detach() {
-    delete fWindowContext;
-    fWindowContext = nullptr;
-}
+Window::~Window() {}
+
+void Window::detach() { fWindowContext = nullptr; }
 
 void Window::visitLayers(std::function<void(Layer*)> visitor) {
     for (int i = 0; i < fLayers.count(); ++i) {
@@ -41,19 +40,19 @@ void Window::onBackendCreated() {
     this->visitLayers([](Layer* layer) { layer->onBackendCreated(); });
 }
 
-bool Window::onChar(SkUnichar c, uint32_t modifiers) {
+bool Window::onChar(SkUnichar c, ModifierKey modifiers) {
     return this->signalLayers([=](Layer* layer) { return layer->onChar(c, modifiers); });
 }
 
-bool Window::onKey(Key key, InputState state, uint32_t modifiers) {
+bool Window::onKey(Key key, InputState state, ModifierKey modifiers) {
     return this->signalLayers([=](Layer* layer) { return layer->onKey(key, state, modifiers); });
 }
 
-bool Window::onMouse(int x, int y, InputState state, uint32_t modifiers) {
+bool Window::onMouse(int x, int y, InputState state, ModifierKey modifiers) {
     return this->signalLayers([=](Layer* layer) { return layer->onMouse(x, y, state, modifiers); });
 }
 
-bool Window::onMouseWheel(float delta, uint32_t modifiers) {
+bool Window::onMouseWheel(float delta, ModifierKey modifiers) {
     return this->signalLayers([=](Layer* layer) { return layer->onMouseWheel(delta, modifiers); });
 }
 

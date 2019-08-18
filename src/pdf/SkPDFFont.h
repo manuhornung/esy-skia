@@ -53,8 +53,6 @@ public:
                type == SkAdvancedTypefaceMetrics::kTrueType_Font;
     }
 
-    static SkExclusiveStrikePtr MakeVectorCache(SkTypeface*, int* sizeOut);
-
     /** Returns true if this font encoding supports glyph IDs above 255.
      */
     bool multiByteGlyphs() const { return SkPDFFont::IsMultiByte(this->getType()); }
@@ -91,9 +89,8 @@ public:
      *  @param glyphID   Specify which section of a large font is of interest.
      */
     static SkPDFFont* GetFontResource(SkPDFDocument* doc,
-                                      SkStrike* cache,
-                                      SkTypeface* typeface,
-                                      SkGlyphID glyphID);
+                                      const SkGlyph* glyphs,
+                                      SkTypeface* typeface);
 
     /** Gets SkAdvancedTypefaceMetrics, and caches the result.
      *  @param typeface can not be nullptr.

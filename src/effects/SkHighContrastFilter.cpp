@@ -7,8 +7,8 @@
 
 #include "include/core/SkString.h"
 #include "include/effects/SkHighContrastFilter.h"
-#include "include/private/SkArenaAlloc.h"
 #include "include/private/SkColorData.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkEffectPriv.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
@@ -248,7 +248,7 @@ void GLHighContrastFilterEffect::emitCode(EmitArgs& args) {
     fragBuilder->codeAppendf("half4 color = %s;", args.fInputColor);
 
     // Unpremultiply. The max() is to guard against 0 / 0.
-    fragBuilder->codeAppendf("half nonZeroAlpha = max(color.a, 0.00001);");
+    fragBuilder->codeAppendf("half nonZeroAlpha = max(color.a, 0.0001);");
     fragBuilder->codeAppendf("color = half4(color.rgb / nonZeroAlpha, nonZeroAlpha);");
 
     if (hcfe.linearize()) {

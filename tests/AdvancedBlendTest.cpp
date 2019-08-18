@@ -6,10 +6,10 @@
  */
 
 #include "include/core/SkBlendMode.h"
-#include "include/gpu/GrBlend.h"
 #include "include/gpu/GrContext.h"
 #include "include/private/GrTypesPriv.h"
 #include "include/private/SkColorData.h"
+#include "src/gpu/GrBlend.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrPaint.h"
@@ -40,11 +40,11 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(AdvancedBlendTest, reporter, ctxInfo) {
         GrPaint paint;
         paint.setXPFactory(xpf);
         GrProcessorSet procs(std::move(paint));
+        bool hasMixedSampledCoverage = false;
         SkPMColor4f overrideColor;
-        GrProcessorSet::Analysis processorAnalysis =
-                procs.finalize(
-                        opaque, coverage, nullptr, &GrUserStencilSettings::kUnused,
-                        GrFSAAType::kNone, caps, GrClampType::kAuto, &overrideColor);
+        GrProcessorSet::Analysis processorAnalysis = procs.finalize(
+                opaque, coverage, nullptr, &GrUserStencilSettings::kUnused, hasMixedSampledCoverage,
+                caps, GrClampType::kAuto, &overrideColor);
 
         if (caps.advancedBlendEquationSupport() &&
                 !caps.isAdvancedBlendEquationBlacklisted(blendEquation)) {

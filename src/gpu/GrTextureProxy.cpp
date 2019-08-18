@@ -5,7 +5,7 @@
  * found in the LICENSE file.
  */
 
-#include "include/private/GrTextureProxy.h"
+#include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/GrTextureProxyPriv.h"
 
 #include "include/gpu/GrContext.h"
@@ -15,48 +15,47 @@
 #include "src/gpu/GrSurfacePriv.h"
 #include "src/gpu/GrTexturePriv.h"
 
-// Deferred version - with data
-GrTextureProxy::GrTextureProxy(const GrBackendFormat& format, const GrSurfaceDesc& srcDesc,
-                               GrMipMapped mipMapped, SkBackingFit fit, SkBudgeted budgeted,
-                               const void* srcData, size_t /*rowBytes*/,
-                               GrInternalSurfaceFlags surfaceFlags)
-        : INHERITED(format, srcDesc, kTopLeft_GrSurfaceOrigin, fit, budgeted, surfaceFlags)
-        , fMipMapped(mipMapped)
-        , fProxyProvider(nullptr)
-        , fDeferredUploader(nullptr) {
-    SkASSERT(!srcData);  // currently handled in Make()
-}
-
 // Deferred version - no data
 GrTextureProxy::GrTextureProxy(const GrBackendFormat& format, const GrSurfaceDesc& srcDesc,
                                GrSurfaceOrigin origin, GrMipMapped mipMapped,
-                               SkBackingFit fit, SkBudgeted budgeted,
+                               GrMipMapsStatus mipMapsStatus, const GrSwizzle& textureSwizzle,
+                               SkBackingFit fit, SkBudgeted budgeted, GrProtected isProtected,
                                GrInternalSurfaceFlags surfaceFlags)
-        : INHERITED(format, srcDesc, origin, fit, budgeted, surfaceFlags)
+        : INHERITED(format, srcDesc, GrRenderable::kNo, origin, textureSwizzle, fit, budgeted,
+                    isProtected, surfaceFlags)
         , fMipMapped(mipMapped)
+        , fMipMapsStatus(mipMapsStatus)
+          SkDEBUGCODE(, fInitialMipMapsStatus(fMipMapsStatus))
         , fProxyProvider(nullptr)
         , fDeferredUploader(nullptr) {}
 
 // Lazy-callback version
 GrTextureProxy::GrTextureProxy(LazyInstantiateCallback&& callback, LazyInstantiationType lazyType,
                                const GrBackendFormat& format, const GrSurfaceDesc& desc,
-                               GrSurfaceOrigin origin, GrMipMapped mipMapped, SkBackingFit fit,
-                               SkBudgeted budgeted, GrInternalSurfaceFlags surfaceFlags)
-        : INHERITED(std::move(callback), lazyType, format, desc, origin, fit, budgeted,
-                    surfaceFlags)
+                               GrSurfaceOrigin origin, GrMipMapped mipMapped,
+                               GrMipMapsStatus mipMapsStatus, const GrSwizzle& texSwizzle,
+                               SkBackingFit fit, SkBudgeted budgeted, GrProtected isProtected,
+                               GrInternalSurfaceFlags surfaceFlags)
+        : INHERITED(std::move(callback), lazyType, format, desc, GrRenderable::kNo, origin,
+                    texSwizzle, fit, budgeted, isProtected, surfaceFlags)
         , fMipMapped(mipMapped)
+        , fMipMapsStatus(mipMapsStatus)
+          SkDEBUGCODE(, fInitialMipMapsStatus(fMipMapsStatus))
         , fProxyProvider(nullptr)
         , fDeferredUploader(nullptr) {}
 
 // Wrapped version
-GrTextureProxy::GrTextureProxy(sk_sp<GrSurface> surf, GrSurfaceOrigin origin)
-        : INHERITED(std::move(surf), origin, SkBackingFit::kExact)
+GrTextureProxy::GrTextureProxy(sk_sp<GrSurface> surf, GrSurfaceOrigin origin,
+                               const GrSwizzle& textureSwizzle)
+        : INHERITED(std::move(surf), origin, textureSwizzle, SkBackingFit::kExact)
         , fMipMapped(fTarget->asTexture()->texturePriv().mipMapped())
+        , fMipMapsStatus(fTarget->asTexture()->texturePriv().mipMapsStatus())
+          SkDEBUGCODE(, fInitialMipMapsStatus(fMipMapsStatus))
         , fProxyProvider(nullptr)
         , fDeferredUploader(nullptr) {
     if (fTarget->getUniqueKey().isValid()) {
         fProxyProvider = fTarget->asTexture()->getContext()->priv().proxyProvider();
-        fProxyProvider->adoptUniqueKeyFromSurface(this, fTarget);
+        fProxyProvider->adoptUniqueKeyFromSurface(this, fTarget.get());
     }
 }
 
@@ -80,22 +79,20 @@ bool GrTextureProxy::instantiate(GrResourceProvider* resourceProvider) {
     if (LazyState::kNot != this->lazyInstantiationState()) {
         return false;
     }
-    if (!this->instantiateImpl(resourceProvider, 1, /* needsStencil = */ false,
-                               kNone_GrSurfaceFlags, fMipMapped,
-                               fUniqueKey.isValid() ? &fUniqueKey : nullptr)) {
+    if (!this->instantiateImpl(resourceProvider, 1, /* needsStencil = */ false, GrRenderable::kNo,
+                               fMipMapped, fUniqueKey.isValid() ? &fUniqueKey : nullptr)) {
         return false;
     }
 
-    SkASSERT(!fTarget->asRenderTarget());
-    SkASSERT(fTarget->asTexture());
+    SkASSERT(!this->peekRenderTarget());
+    SkASSERT(this->peekTexture());
     return true;
 }
 
 sk_sp<GrSurface> GrTextureProxy::createSurface(GrResourceProvider* resourceProvider) const {
-    sk_sp<GrSurface> surface = this->createSurfaceImpl(resourceProvider, 1,
-                                                       /* needsStencil = */ false,
-                                                       kNone_GrSurfaceFlags,
-                                                       fMipMapped);
+    sk_sp<GrSurface> surface =
+            this->createSurfaceImpl(resourceProvider, 1,
+                                    /* needsStencil = */ false, GrRenderable::kNo, fMipMapped);
     if (!surface) {
         return nullptr;
     }
@@ -112,7 +109,7 @@ void GrTextureProxyPriv::setDeferredUploader(std::unique_ptr<GrDeferredProxyUplo
 
 void GrTextureProxyPriv::scheduleUpload(GrOpFlushState* flushState) {
     // The texture proxy's contents may already have been uploaded or instantiation may have failed
-    if (fTextureProxy->fDeferredUploader && fTextureProxy->fTarget) {
+    if (fTextureProxy->fDeferredUploader && fTextureProxy->isInstantiated()) {
         fTextureProxy->fDeferredUploader->scheduleUpload(flushState, fTextureProxy);
     }
 }
@@ -172,6 +169,7 @@ void GrTextureProxy::onValidateSurface(const GrSurface* surface) {
 
     // Anything that is checked here should be duplicated in GrTextureRenderTargetProxy's version
     SkASSERT(surface->asTexture());
+    // It is possible to fulfill a non-mipmapped proxy with a mipmapped texture.
     SkASSERT(GrMipMapped::kNo == this->proxyMipMapped() ||
              GrMipMapped::kYes == surface->asTexture()->texturePriv().mipMapped());
 

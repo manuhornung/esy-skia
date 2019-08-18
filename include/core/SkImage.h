@@ -154,18 +154,76 @@ public:
     static sk_sp<SkImage> MakeFromGenerator(std::unique_ptr<SkImageGenerator> imageGenerator,
                                             const SkIRect* subset = nullptr);
 
-    /** Creates SkImage from encoded data.
-        subset allows selecting a portion of the full image. Pass nullptr to select the entire
-        image; otherwise, subset must be contained by image bounds.
-
-        SkImage is returned if format of the encoded data is recognized and supported.
-        Recognized formats vary by platform.
-
-        @param encoded  data of SkImage to decode
-        @param subset   bounds of returned SkImage; may be nullptr
-        @return         created SkImage, or nullptr
+    /**
+     *  Return an image backed by the encoded data, but attempt to defer decoding until the image
+     *  is actually used/drawn. This deferral allows the system to cache the result, either on the
+     *  CPU or on the GPU, depending on where the image is drawn. If memory is low, the cache may
+     *  be purged, causing the next draw of the image to have to re-decode.
+     *
+     *  The subset parameter specifies a area within the decoded image to create the image from.
+     *  If subset is null, then the entire image is returned.
+     *
+     *  This is similar to DecodeTo[Raster,Texture], but this method will attempt to defer the
+     *  actual decode, while the DecodeTo... method explicitly decode and allocate the backend
+     *  when the call is made.
+     *
+     *  If the encoded format is not supported, or subset is outside of the bounds of the decoded
+     *  image, nullptr is returned.
+     *
+     *  @param encoded  the encoded data
+     *  @param length   the number of bytes of encoded data
+     *  @param subset   the bounds of the pixels within the decoded image to return. may be null.
+     *  @return         created SkImage, or nullptr
     */
     static sk_sp<SkImage> MakeFromEncoded(sk_sp<SkData> encoded, const SkIRect* subset = nullptr);
+
+    /**
+     *  Decode the data in encoded/length into a raster image.
+     *
+     *  The subset parameter specifies a area within the decoded image to create the image from.
+     *  If subset is null, then the entire image is returned.
+     *
+     *  This is similar to MakeFromEncoded, but this method will always decode immediately, and
+     *  allocate the memory for the pixels for the lifetime of the returned image.
+     *
+     *  If the encoded format is not supported, or subset is outside of the bounds of the decoded
+     *  image, nullptr is returned.
+     *
+     *  @param encoded  the encoded data
+     *  @param length   the number of bytes of encoded data
+     *  @param subset   the bounds of the pixels within the decoded image to return. may be null.
+     *  @return         created SkImage, or nullptr
+     */
+    static sk_sp<SkImage> DecodeToRaster(const void* encoded, size_t length,
+                                         const SkIRect* subset = nullptr);
+    static sk_sp<SkImage> DecodeToRaster(const sk_sp<SkData>& data,
+                                         const SkIRect* subset = nullptr) {
+        return DecodeToRaster(data->data(), data->size(), subset);
+    }
+
+    /**
+     *  Decode the data in encoded/length into a texture-backed image.
+     *
+     *  The subset parameter specifies a area within the decoded image to create the image from.
+     *  If subset is null, then the entire image is returned.
+     *
+     *  This is similar to MakeFromEncoded, but this method will always decode immediately, and
+     *  allocate the texture for the pixels for the lifetime of the returned image.
+     *
+     *  If the encoded format is not supported, or subset is outside of the bounds of the decoded
+     *  image, nullptr is returned.
+     *
+     *  @param encoded  the encoded data
+     *  @param length   the number of bytes of encoded data
+     *  @param subset   the bounds of the pixels within the decoded image to return. may be null.
+     *  @return         created SkImage, or nullptr
+     */
+    static sk_sp<SkImage> DecodeToTexture(GrContext* ctx, const void* encoded, size_t length,
+                                          const SkIRect* subset = nullptr);
+    static sk_sp<SkImage> DecodeToTexture(GrContext* ctx, const sk_sp<SkData>& data,
+                                          const SkIRect* subset = nullptr) {
+        return DecodeToTexture(ctx, data->data(), data->size(), subset);
+    }
 
     // Experimental
     enum CompressionType {
@@ -257,35 +315,6 @@ public:
                                           TextureReleaseProc textureReleaseProc,
                                           ReleaseContext releaseContext);
 
-    /** Creates SkImage from encoded data. SkImage is uploaded to GPU back-end using context.
-
-        Created SkImage is available to other GPU contexts, and is available across thread
-        boundaries. All contexts must be in the same GPU share group, or otherwise
-        share resources.
-
-        When SkImage is no longer referenced, context releases texture memory
-        asynchronously.
-
-        GrBackendTexture decoded from data is uploaded to match SkSurface created with
-        dstColorSpace. SkColorSpace of SkImage is determined by encoded data.
-
-        SkImage is returned if format of data is recognized and supported, and if context
-        supports moving resources. Recognized formats vary by platform and GPU back-end.
-
-        SkImage is returned using MakeFromEncoded() if context is nullptr or does not support
-        moving resources between contexts.
-
-        @param context                GPU context
-        @param data                   SkImage to decode
-        @param buildMips              create SkImage as mip map if true
-        @param dstColorSpace          range of colors of matching SkSurface on GPU
-        @param limitToMaxTextureSize  downscale image to GPU maximum texture size, if necessary
-        @return                       created SkImage, or nullptr
-    */
-    static sk_sp<SkImage> MakeCrossContextFromEncoded(GrContext* context, sk_sp<SkData> data,
-                                                      bool buildMips, SkColorSpace* dstColorSpace,
-                                                      bool limitToMaxTextureSize = false);
-
     /** Creates SkImage from pixmap. SkImage is uploaded to GPU back-end using context.
 
         Created SkImage is available to other GPU contexts, and is available across thread
@@ -312,8 +341,14 @@ public:
         @return                       created SkImage, or nullptr
     */
     static sk_sp<SkImage> MakeCrossContextFromPixmap(GrContext* context, const SkPixmap& pixmap,
-                                                     bool buildMips, SkColorSpace* dstColorSpace,
+                                                     bool buildMips,
                                                      bool limitToMaxTextureSize = false);
+
+    static sk_sp<SkImage> MakeCrossContextFromPixmap(GrContext* context, const SkPixmap& pixmap,
+                                                     bool buildMips, SkColorSpace*,
+                                                     bool limitToMaxTextureSize = false) {
+        return MakeCrossContextFromPixmap(context, pixmap, buildMips, limitToMaxTextureSize);
+    }
 
     /** Creates SkImage from backendTexture associated with context. backendTexture and
         returned SkImage are managed internally, and are released when no longer needed.
@@ -944,8 +979,7 @@ public:
         @param mipMapped      whether created SkImage texture must allocate mip map levels
         @return               created SkImage, or nullptr
     */
-    sk_sp<SkImage> makeTextureImage(GrContext* context, SkColorSpace* dstColorSpace,
-                                    GrMipMapped mipMapped = GrMipMapped::kNo) const;
+    sk_sp<SkImage> makeTextureImage(GrContext* context, GrMipMapped = GrMipMapped::kNo) const;
 
     /** Returns raster image or lazy image. Copies SkImage backed by GPU texture into
         CPU memory if needed. Returns original SkImage if decoded in raster bitmap,
@@ -1082,6 +1116,12 @@ public:
     */
     sk_sp<SkImage> makeColorTypeAndColorSpace(SkColorType targetColorType,
                                               sk_sp<SkColorSpace> targetColorSpace) const;
+
+    /** Creates a new SkImage identical to this one, but with a different SkColorSpace.
+        This does not convert the underlying pixel data, so the resulting image will draw
+        differently.
+    */
+    sk_sp<SkImage> reinterpretColorSpace(sk_sp<SkColorSpace> newColorSpace) const;
 
 private:
     SkImage(const SkImageInfo& info, uint32_t uniqueID);

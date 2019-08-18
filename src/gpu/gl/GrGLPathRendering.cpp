@@ -9,7 +9,7 @@
 #include "src/gpu/gl/GrGLPathRendering.h"
 #include "src/gpu/gl/GrGLUtil.h"
 
-#include "include/private/GrRenderTargetProxy.h"
+#include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/gl/GrGLPath.h"
 #include "src/gpu/gl/GrGLPathRendering.h"
 
@@ -91,7 +91,7 @@ void GrGLPathRendering::onStencilPath(const StencilPathArgs& args, const GrPath*
     GrGLRenderTarget* rt = static_cast<GrGLRenderTarget*>(args.fProxy->peekRenderTarget());
     SkISize size = SkISize::Make(rt->width(), rt->height());
     this->setProjectionMatrix(*args.fViewMatrix, size, args.fProxy->origin());
-    gpu->flushScissor(*args.fScissor, rt->getViewport(), args.fProxy->origin());
+    gpu->flushScissor(*args.fScissor, rt->width(), rt->height(), args.fProxy->origin());
     gpu->flushHWAAState(rt, args.fUseHWAA);
     gpu->flushRenderTarget(rt);
 

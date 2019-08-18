@@ -14,7 +14,7 @@
 #include "src/gpu/mtl/GrMtlBuffer.h"
 #include "src/gpu/mtl/GrMtlPipelineStateDataManager.h"
 
-#import <metal/metal.h>
+#import <Metal/Metal.h>
 
 class GrMtlGpu;
 class GrMtlPipelineStateDataManager;
@@ -37,8 +37,7 @@ public:
             MTLPixelFormat pixelFormat,
             const GrGLSLBuiltinUniformHandles& builtinUniformHandles,
             const UniformInfoArray& uniforms,
-            uint32_t geometryUniformBufferSize,
-            uint32_t fragmentUniformBufferSize,
+            uint32_t uniformBufferSize,
             uint32_t numSamplers,
             std::unique_ptr<GrGLSLPrimitiveProcessor> geometryProcessor,
             std::unique_ptr<GrGLSLXferProcessor> xferPRocessor,
@@ -51,7 +50,8 @@ public:
                  const GrPrimitiveProcessor& primPRoc, const GrPipeline& pipeline,
                  const GrTextureProxy* const primProcTextures[]);
 
-    void setDrawState(id<MTLRenderCommandEncoder>, GrPixelConfig, const GrXferProcessor&);
+    void setDrawState(id<MTLRenderCommandEncoder>, const GrSwizzle& outputSwizzle,
+                      const GrXferProcessor&);
 
     static void SetDynamicScissorRectState(id<MTLRenderCommandEncoder> renderCmdEncoder,
                                            const GrRenderTarget* renderTarget,
@@ -101,7 +101,7 @@ private:
 
     void bind(id<MTLRenderCommandEncoder>);
 
-    void setBlendConstants(id<MTLRenderCommandEncoder>, GrPixelConfig, const GrXferProcessor&);
+    void setBlendConstants(id<MTLRenderCommandEncoder>, const GrSwizzle&, const GrXferProcessor&);
 
     void setDepthStencilState(id<MTLRenderCommandEncoder> renderCmdEncoder);
 

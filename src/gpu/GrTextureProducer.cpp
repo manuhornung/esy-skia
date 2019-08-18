@@ -6,7 +6,6 @@
  */
 
 #include "include/private/GrRecordingContext.h"
-#include "include/private/GrTextureProxy.h"
 #include "src/core/SkMipMap.h"
 #include "src/core/SkRectPriv.h"
 #include "src/gpu/GrClip.h"
@@ -15,6 +14,7 @@
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrTextureProducer.h"
+#include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/SkGr.h"
 #include "src/gpu/effects/GrBicubicEffect.h"
 #include "src/gpu/effects/GrTextureDomain.h"
@@ -22,11 +22,10 @@
 
 sk_sp<GrTextureProxy> GrTextureProducer::CopyOnGpu(GrRecordingContext* context,
                                                    sk_sp<GrTextureProxy> inputProxy,
+                                                   GrColorType colorType,
                                                    const CopyParams& copyParams,
                                                    bool dstWillRequireMipMaps) {
     SkASSERT(context);
-
-    GrPixelConfig config = GrMakePixelConfigUncompressed(inputProxy->config());
 
     const SkRect dstRect = SkRect::MakeIWH(copyParams.fWidth, copyParams.fHeight);
     GrMipMapped mipMapped = dstWillRequireMipMaps ? GrMipMapped::kYes : GrMipMapped::kNo;
@@ -49,15 +48,10 @@ sk_sp<GrTextureProxy> GrTextureProducer::CopyOnGpu(GrRecordingContext* context,
         }
     }
 
-    GrBackendFormat format = inputProxy->backendFormat().makeTexture2D();
-    if (!format.isValid()) {
-        return nullptr;
-    }
-
     sk_sp<GrRenderTargetContext> copyRTC =
-        context->priv().makeDeferredRenderTargetContextWithFallback(
-            format, SkBackingFit::kExact, dstRect.width(), dstRect.height(),
-            config, nullptr, 1, mipMapped, inputProxy->origin());
+            context->priv().makeDeferredRenderTargetContextWithFallback(
+                    SkBackingFit::kExact, dstRect.width(), dstRect.height(), colorType, nullptr, 1,
+                    mipMapped, inputProxy->origin());
     if (!copyRTC) {
         return nullptr;
     }
@@ -225,15 +219,16 @@ std::unique_ptr<GrFragmentProcessor> GrTextureProducer::createFragmentProcessorF
         static const GrSamplerState::WrapMode kDecalDecal[] = {
                 GrSamplerState::WrapMode::kClampToBorder, GrSamplerState::WrapMode::kClampToBorder};
 
+        static constexpr auto kDir = GrBicubicEffect::Direction::kXY;
         if (kDomain_DomainMode == domainMode || (fDomainNeedsDecal && !clampToBorderSupport)) {
             GrTextureDomain::Mode wrapMode = fDomainNeedsDecal ? GrTextureDomain::kDecal_Mode
                                          : GrTextureDomain::kClamp_Mode;
-            return GrBicubicEffect::Make(std::move(proxy), textureMatrix, kClampClamp,
-                                         wrapMode, wrapMode, this->alphaType(),
+            return GrBicubicEffect::Make(std::move(proxy), textureMatrix, kClampClamp, wrapMode,
+                                         wrapMode, kDir, this->alphaType(),
                                          kDomain_DomainMode == domainMode ? &domain : nullptr);
         } else {
             return GrBicubicEffect::Make(std::move(proxy), textureMatrix,
-                                         fDomainNeedsDecal ? kDecalDecal : kClampClamp,
+                                         fDomainNeedsDecal ? kDecalDecal : kClampClamp, kDir,
                                          this->alphaType());
         }
     }
@@ -276,7 +271,7 @@ sk_sp<GrTextureProxy> GrTextureProducer::refTextureProxyForParams(
     // Check to make sure that if we say the texture willBeMipped that the returned texture has mip
     // maps, unless the config is not copyable.
     SkASSERT(!result || !willBeMipped || result->mipMapped() == GrMipMapped::kYes ||
-             !this->context()->priv().caps()->isConfigCopyable(result->config()));
+             !this->context()->priv().caps()->isFormatCopyable(result->backendFormat()));
 
     // Check that the "no scaling expected" case always returns a proxy of the same size as the
     // producer.
@@ -300,7 +295,7 @@ sk_sp<GrTextureProxy> GrTextureProducer::refTextureProxy(GrMipMapped willNeedMip
     // Check to make sure that if we say the texture willBeMipped that the returned texture has mip
     // maps, unless the config is not copyable.
     SkASSERT(!result || !willBeMipped || result->mipMapped() == GrMipMapped::kYes ||
-             !this->context()->priv().caps()->isConfigCopyable(result->config()));
+             !this->context()->priv().caps()->isFormatCopyable(result->backendFormat()));
 
     // Check that no scaling occured and we returned a proxy of the same size as the producer.
     SkASSERT(!result || (result->width() == this->width() && result->height() == this->height()));

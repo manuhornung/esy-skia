@@ -86,7 +86,7 @@ namespace DM {
 GMSrc::GMSrc(skiagm::GMFactory factory) : fFactory(factory) {}
 
 Error GMSrc::draw(SkCanvas* canvas) const {
-    std::unique_ptr<skiagm::GM> gm(fFactory(nullptr));
+    std::unique_ptr<skiagm::GM> gm(fFactory());
     SkString errorMsg;
     skiagm::DrawResult drawResult = gm->draw(canvas, &errorMsg);
     if (skiagm::DrawResult::kSkip == drawResult) {
@@ -96,17 +96,17 @@ Error GMSrc::draw(SkCanvas* canvas) const {
 }
 
 SkISize GMSrc::size() const {
-    std::unique_ptr<skiagm::GM> gm(fFactory(nullptr));
+    std::unique_ptr<skiagm::GM> gm(fFactory());
     return gm->getISize();
 }
 
 Name GMSrc::name() const {
-    std::unique_ptr<skiagm::GM> gm(fFactory(nullptr));
+    std::unique_ptr<skiagm::GM> gm(fFactory());
     return gm->getName();
 }
 
 void GMSrc::modifyGrContextOptions(GrContextOptions* options) const {
-    std::unique_ptr<skiagm::GM> gm(fFactory(nullptr));
+    std::unique_ptr<skiagm::GM> gm(fFactory());
     gm->modifyGrContextOptions(options);
 }
 
@@ -1331,6 +1331,7 @@ static DEFINE_bool(releaseAndAbandonGpuContext, false,
                    "Test releasing all gpu resources and abandoning the GrContext "
                    "after running each test");
 static DEFINE_bool(drawOpClip, false, "Clip each GrDrawOp to its device bounds for testing.");
+static DEFINE_bool(programBinaryCache, true, "Use in-memory program binary cache");
 
 GPUSink::GPUSink(GrContextFactory::ContextType ct,
                  GrContextFactory::ContextOverrides overrides,
@@ -1351,7 +1352,11 @@ GPUSink::GPUSink(GrContextFactory::ContextType ct,
         , fAlphaType(alphaType)
         , fColorSpace(std::move(colorSpace))
         , fThreaded(threaded)
-        , fBaseContextOptions(grCtxOptions) {}
+        , fBaseContextOptions(grCtxOptions) {
+    if (FLAGS_programBinaryCache) {
+        fBaseContextOptions.fPersistentCache = &fMemoryCache;
+    }
+}
 
 Error GPUSink::draw(const Src& src, SkBitmap* dst, SkWStream* dstStream, SkString* log) const {
     return this->onDraw(src, dst, dstStream, log, fBaseContextOptions);
@@ -1388,9 +1393,9 @@ Error GPUSink::onDraw(const Src& src, SkBitmap* dst, SkWStream*, SkString* log,
                                                   &props);
             break;
         case SkCommandLineConfigGpu::SurfType::kBackendTexture:
-            backendTexture = context->priv().createBackendTexture(
-                    info.width(), info.height(), info.colorType(),
-                    GrMipMapped::kNo, GrRenderable::kYes);
+            backendTexture = context->createBackendTexture(
+                    info.width(), info.height(), info.colorType(), SkColors::kTransparent,
+                    GrMipMapped::kNo, GrRenderable::kYes, GrProtected::kNo);
             surface = SkSurface::MakeFromBackendTexture(context, backendTexture,
                                                         kTopLeft_GrSurfaceOrigin, fSampleCount,
                                                         fColorType, info.refColorSpace(), &props);
@@ -1440,7 +1445,7 @@ Error GPUSink::onDraw(const Src& src, SkBitmap* dst, SkWStream*, SkString* log,
     if (!context->abandoned()) {
         surface.reset();
         if (backendTexture.isValid()) {
-            context->priv().deleteBackendTexture(backendTexture);
+            context->deleteBackendTexture(backendTexture);
         }
         if (backendRT.isValid()) {
             context->priv().getGpu()->deleteTestingOnlyBackendRenderTarget(backendRT);
@@ -1522,6 +1527,9 @@ Error GPUPersistentCacheTestingSink::draw(const Src& src, SkBitmap* dst, SkWStre
     GrContextOptions contextOptions = this->baseContextOptions();
     contextOptions.fPersistentCache = &memoryCache;
     contextOptions.fDisallowGLSLBinaryCaching = (fCacheType == 2);
+    // anglebug.com/3619
+    contextOptions.fGpuPathRenderers =
+            contextOptions.fGpuPathRenderers & ~GpuPathRenderers::kStencilAndCover;
 
     Error err = this->onDraw(src, dst, wStream, log, contextOptions);
     if (!err.isEmpty() || !dst) {

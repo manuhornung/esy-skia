@@ -48,7 +48,7 @@
       "skia@abc123"
     ],
     "cwd": "[START_DIR]/cache/work",
-    "env_prefixes": {
+    "env_suffixes": {
       "PATH": [
         "RECIPE_REPO[depot_tools]"
       ]
@@ -119,8 +119,7 @@
       "CHROME_HEADLESS": "1",
       "PATH": "<PATH>:RECIPE_REPO[depot_tools]"
     },
-    "name": "git diff #1",
-    "stdout": "/path/to/tmp/"
+    "name": "git diff #1"
   },
   {
     "cmd": [
@@ -137,6 +136,73 @@
       "PATH": "[START_DIR]/go/go/bin:[START_DIR]/cache/gopath/bin:<PATH>"
     },
     "name": "generate gl interfaces"
+  },
+  {
+    "cmd": [
+      "python",
+      "-u",
+      "bin/fetch-gn"
+    ],
+    "cwd": "[START_DIR]/cache/work/skia",
+    "env": {
+      "CHROME_HEADLESS": "1",
+      "PATH": "<PATH>:RECIPE_REPO[depot_tools]"
+    },
+    "infra_step": true,
+    "name": "fetch-gn"
+  },
+  {
+    "cmd": [
+      "git",
+      "ls-files",
+      "*.gn"
+    ],
+    "cwd": "[START_DIR]/cache/work/skia",
+    "env": {
+      "CHROME_HEADLESS": "1",
+      "PATH": "<PATH>:RECIPE_REPO[depot_tools]"
+    },
+    "infra_step": true,
+    "name": "list .gn files"
+  },
+  {
+    "cmd": [
+      "bin/gn",
+      "format",
+      "BUILD.gn"
+    ],
+    "cwd": "[START_DIR]/cache/work/skia",
+    "env": {
+      "CHROME_HEADLESS": "1",
+      "PATH": "<PATH>:RECIPE_REPO[depot_tools]"
+    },
+    "name": "format BUILD.gn"
+  },
+  {
+    "cmd": [
+      "bin/gn",
+      "format",
+      "gn/foo.gn"
+    ],
+    "cwd": "[START_DIR]/cache/work/skia",
+    "env": {
+      "CHROME_HEADLESS": "1",
+      "PATH": "<PATH>:RECIPE_REPO[depot_tools]"
+    },
+    "name": "format gn/foo.gn"
+  },
+  {
+    "cmd": [
+      "python",
+      "-u",
+      "tools/rewrite_includes.py"
+    ],
+    "cwd": "[START_DIR]/cache/work/skia",
+    "env": {
+      "CHROME_HEADLESS": "1",
+      "PATH": "<PATH>:RECIPE_REPO[depot_tools]"
+    },
+    "name": "rewrite #includes"
   },
   {
     "cmd": [
@@ -175,7 +241,7 @@
       "PATH": "<PATH>:RECIPE_REPO[depot_tools]"
     },
     "infra_step": true,
-    "name": "fetch-gn"
+    "name": "fetch-gn (2)"
   },
   {
     "cmd": [
@@ -229,8 +295,7 @@
       "CHROME_HEADLESS": "1",
       "PATH": "<PATH>:RECIPE_REPO[depot_tools]"
     },
-    "name": "git diff #2",
-    "stdout": "/path/to/tmp/"
+    "name": "git diff #2"
   },
   {
     "cmd": [
@@ -257,7 +322,6 @@
     ]
   },
   {
-    "jsonResult": null,
     "name": "$result"
   }
 ]

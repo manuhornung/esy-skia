@@ -38,6 +38,7 @@ PUBLIC_API_OWNERS = (
 )
 
 AUTHORS_FILE_NAME = 'AUTHORS'
+RELEASE_NOTES_FILE_NAME = 'RELEASE_NOTES.txt'
 
 DOCS_PREVIEW_URL = 'https://skia.org/?cl='
 GOLD_TRYBOT_URL = 'https://gold.skia.org/search?issue='
@@ -191,6 +192,37 @@ def _CheckGNFormatted(input_api, output_api):
           '`%s` failed, try\n\t%s' % (' '.join(cmd), fix)))
   return results
 
+def _CheckIncludesFormatted(input_api, output_api):
+  """Make sure #includes in files we're changing have been formatted."""
+  files = [str(f) for f in input_api.AffectedFiles() if f.Action() != 'D']
+  cmd = ['python',
+         'tools/rewrite_includes.py',
+         '--dry-run'] + files
+  if 0 != subprocess.call(cmd):
+    return [output_api.PresubmitError('`%s` failed' % ' '.join(cmd))]
+  return []
+
+def _CheckCompileIsolate(input_api, output_api):
+  """Ensure that gen_compile_isolate.py does not change compile.isolate."""
+  # Only run the check if files were added or removed.
+  results = []
+  script = os.path.join('infra', 'bots', 'gen_compile_isolate.py')
+  isolate = os.path.join('infra', 'bots', 'compile.isolated')
+  for f in input_api.AffectedFiles():
+    if f.Action() in ('A', 'D', 'R'):
+      break
+    if f.LocalPath() in (script, isolate):
+      break
+  else:
+    return results
+
+  cmd = ['python', script, 'test']
+  try:
+    subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+  except subprocess.CalledProcessError as e:
+    results.append(output_api.PresubmitError(e.output))
+  return results
+
 
 class _WarningsAsErrors():
   def __init__(self, output_api):
@@ -202,6 +234,24 @@ class _WarningsAsErrors():
     return self.output_api
   def __exit__(self, ex_type, ex_value, ex_traceback):
     self.output_api.PresubmitPromptWarning = self.old_warning
+
+
+def _CheckDEPSValid(input_api, output_api):
+  """Ensure that DEPS contains valid entries."""
+  results = []
+  script = os.path.join('infra', 'bots', 'check_deps.py')
+  relevant_files = ('DEPS', script)
+  for f in input_api.AffectedFiles():
+    if f.LocalPath() in relevant_files:
+      break
+  else:
+    return results
+  cmd = ['python', script]
+  try:
+    subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+  except subprocess.CalledProcessError as e:
+    results.append(output_api.PresubmitError(e.output))
+  return results
 
 
 def _CommonChecks(input_api, output_api):
@@ -228,6 +278,9 @@ def _CommonChecks(input_api, output_api):
   results.extend(_CopyrightChecks(input_api, output_api,
                                   source_file_filter=sources))
   results.extend(_ToolFlags(input_api, output_api))
+  results.extend(_CheckCompileIsolate(input_api, output_api))
+  results.extend(_CheckDEPSValid(input_api, output_api))
+  results.extend(_CheckIncludesFormatted(input_api, output_api))
   return results
 
 
@@ -244,6 +297,7 @@ def CheckChangeOnUpload(input_api, output_api):
   results.extend(_InfraTests(input_api, output_api))
 
   results.extend(_CheckGNFormatted(input_api, output_api))
+  results.extend(_CheckReleaseNotesForPublicAPI(input_api, output_api))
   return results
 
 
@@ -355,6 +409,31 @@ def _CheckOwnerIsInAuthorsFile(input_api, output_api):
       input_api.logging.error('AUTHORS file not found!')
 
   return results
+
+
+def _CheckReleaseNotesForPublicAPI(input_api, output_api):
+  """Checks to see if release notes file is updated with public API changes."""
+  results = []
+  public_api_changed = False
+  release_file_changed = False
+  for affected_file in input_api.AffectedFiles():
+    affected_file_path = affected_file.LocalPath()
+    file_path, file_ext = os.path.splitext(affected_file_path)
+    # We only care about files that end in .h and are under the top-level
+    # include dir, but not include/private.
+    if (file_ext == '.h' and
+        file_path.split(os.path.sep)[0] == 'include' and
+        'private' not in file_path):
+      public_api_changed = True
+    elif affected_file_path == RELEASE_NOTES_FILE_NAME:
+      release_file_changed = True
+
+  if public_api_changed and not release_file_changed:
+    results.append(output_api.PresubmitPromptWarning(
+        'If this change affects a client API, please add a summary line '
+        'to the %s file.' % RELEASE_NOTES_FILE_NAME))
+  return results
+
 
 
 def _CheckLGTMsForPublicAPI(input_api, output_api):

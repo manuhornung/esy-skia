@@ -8,8 +8,7 @@
 #ifndef GrPrimitiveProcessor_DEFINED
 #define GrPrimitiveProcessor_DEFINED
 
-#include "include/private/GrColor.h"
-#include "include/private/GrProxyRef.h"
+#include "src/gpu/GrColor.h"
 #include "src/gpu/GrNonAtomicRef.h"
 #include "src/gpu/GrProcessor.h"
 #include "src/gpu/GrShaderVar.h"
@@ -255,34 +254,37 @@ class GrPrimitiveProcessor::TextureSampler {
 public:
     TextureSampler() = default;
 
-    TextureSampler(GrTextureType, GrPixelConfig, const GrSamplerState&, uint32_t extraSamplerKey);
+    TextureSampler(GrTextureType, const GrSamplerState&, const GrSwizzle&,
+                   uint32_t extraSamplerKey);
 
-    explicit TextureSampler(GrTextureType, GrPixelConfig,
-                            GrSamplerState::Filter = GrSamplerState::Filter::kNearest,
-                            GrSamplerState::WrapMode wrapXAndY = GrSamplerState::WrapMode::kClamp);
+    explicit TextureSampler(GrTextureType, GrSamplerState::Filter,
+                            GrSamplerState::WrapMode wrapXAndY, const GrSwizzle&);
 
     TextureSampler(const TextureSampler&) = delete;
     TextureSampler& operator=(const TextureSampler&) = delete;
 
-    void reset(GrTextureType, GrPixelConfig, const GrSamplerState&, uint32_t extraSamplerKey = 0);
-    void reset(GrTextureType, GrPixelConfig,
+    void reset(GrTextureType, const GrSamplerState&, const GrSwizzle&,
+               uint32_t extraSamplerKey = 0);
+    void reset(GrTextureType,
                GrSamplerState::Filter,
-               GrSamplerState::WrapMode wrapXAndY);
+               GrSamplerState::WrapMode wrapXAndY,
+               const GrSwizzle& swizzle);
 
     GrTextureType textureType() const { return fTextureType; }
-    GrPixelConfig config() const { return fConfig; }
 
     const GrSamplerState& samplerState() const { return fSamplerState; }
+    const GrSwizzle& swizzle() const { return fSwizzle; }
 
     uint32_t extraSamplerKey() const { return fExtraSamplerKey; }
 
-    bool isInitialized() const { return fConfig != kUnknown_GrPixelConfig; }
+    bool isInitialized() const { return fIsInitialized; }
 
 private:
     GrSamplerState fSamplerState;
+    GrSwizzle fSwizzle;
     GrTextureType fTextureType = GrTextureType::k2D;
-    GrPixelConfig fConfig = kUnknown_GrPixelConfig;
     uint32_t fExtraSamplerKey = 0;
+    bool fIsInitialized = false;
 };
 
 const GrPrimitiveProcessor::TextureSampler& GrPrimitiveProcessor::IthTextureSampler(int i) {
@@ -353,6 +355,11 @@ static constexpr inline size_t GrVertexAttribTypeSize(GrVertexAttribType type) {
             return sizeof(int32_t);
         case kUint_GrVertexAttribType:
             return sizeof(uint32_t);
+        case kUShort_norm_GrVertexAttribType:
+            return sizeof(uint16_t);
+        // Experimental (for Y416)
+        case kUShort4_norm_GrVertexAttribType:
+            return 4 * sizeof(uint16_t);
     }
     // GCC fails because SK_ABORT evaluates to non constexpr. clang and cl.exe think this is
     // unreachable and don't complain.

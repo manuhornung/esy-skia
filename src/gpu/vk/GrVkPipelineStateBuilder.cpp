@@ -80,10 +80,6 @@ bool GrVkPipelineStateBuilder::createVkShaderModule(VkShaderStageFlagBits stage,
     if (outInputs->fRTHeight) {
         this->addRTHeightUniform(SKSL_RTHEIGHT_NAME);
     }
-    if (outInputs->fFlipY) {
-        desc->setSurfaceOriginKey(GrGLSLFragmentShaderBuilder::KeyForSurfaceOrigin(
-                                                     this->origin()));
-    }
     return true;
 }
 
@@ -202,9 +198,11 @@ GrVkPipelineState* GrVkPipelineStateBuilder::finalize(const GrStencilSettings& s
     VkPipelineShaderStageCreateInfo shaderStageInfo[3];
     SkSL::Program::Settings settings;
     settings.fCaps = this->caps()->shaderCaps();
+    settings.fVkCaps = &this->gpu()->vkCaps();
     settings.fFlipY = this->origin() != kTopLeft_GrSurfaceOrigin;
     settings.fSharpenTextures =
                         this->gpu()->getContext()->priv().options().fSharpenMipmappedTextures;
+    settings.fRTHeightOffset = fUniformHandler.getRTHeightOffset();
     SkASSERT(!this->fragColorIsInOut());
 
     sk_sp<SkData> cached;
@@ -300,7 +298,7 @@ GrVkPipelineState* GrVkPipelineStateBuilder::finalize(const GrStencilSettings& s
         }
     }
     GrVkPipeline* pipeline = resourceProvider.createPipeline(
-            this->renderTarget()->numColorSamples(), fPrimProc, fPipeline, stencil, this->origin(),
+            this->renderTarget()->numSamples(), fPrimProc, fPipeline, stencil, this->origin(),
             shaderStageInfo, numShaderStages, primitiveType, compatibleRenderPass, pipelineLayout);
     for (int i = 0; i < kGrShaderTypeCount; ++i) {
         // This if check should not be needed since calling destroy on a VK_NULL_HANDLE is allowed.
@@ -319,12 +317,10 @@ GrVkPipelineState* GrVkPipelineStateBuilder::finalize(const GrStencilSettings& s
 
     return new GrVkPipelineState(fGpu,
                                  pipeline,
-                                 pipelineLayout,
                                  samplerDSHandle,
                                  fUniformHandles,
                                  fUniformHandler.fUniforms,
-                                 fUniformHandler.fCurrentGeometryUBOOffset,
-                                 fUniformHandler.fCurrentFragmentUBOOffset,
+                                 fUniformHandler.fCurrentUBOOffset,
                                  fUniformHandler.fSamplers,
                                  std::move(fGeometryProcessor),
                                  std::move(fXferProcessor),

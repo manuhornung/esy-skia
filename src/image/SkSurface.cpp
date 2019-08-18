@@ -81,6 +81,13 @@ GrBackendRenderTarget SkSurface_Base::onGetBackendRenderTarget(BackendHandleAcce
     return GrBackendRenderTarget(); // invalid
 }
 
+bool SkSurface_Base::onReplaceBackendTexture(const GrBackendTexture&,
+                                             GrSurfaceOrigin,
+                                             TextureReleaseProc,
+                                             ReleaseContext) {
+    return false;
+}
+
 void SkSurface_Base::onDraw(SkCanvas* canvas, SkScalar x, SkScalar y, const SkPaint* paint) {
     auto image = this->makeImageSnapshot();
     if (image) {
@@ -88,17 +95,122 @@ void SkSurface_Base::onDraw(SkCanvas* canvas, SkScalar x, SkScalar y, const SkPa
     }
 }
 
-void SkSurface_Base::onAsyncReadPixels(const SkImageInfo& info, int srcX, int srcY,
-                                       ReadPixelsCallback callback, ReadPixelsContext context) {
-    SkASSERT(SkIRect::MakeWH(this->width(), this->height())
-                     .contains(SkIRect::MakeXYWH(srcX, srcY, info.width(), info.height())));
+void SkSurface_Base::onAsyncRescaleAndReadPixels(const SkImageInfo& info, const SkIRect& srcRect,
+                                                 SkSurface::RescaleGamma rescaleGamma,
+                                                 SkFilterQuality rescaleQuality,
+                                                 SkSurface::ReadPixelsCallback callback,
+                                                 SkSurface::ReadPixelsContext context) {
+    int srcW = srcRect.width();
+    int srcH = srcRect.height();
+    float sx = (float)info.width() / srcW;
+    float sy = (float)info.height() / srcH;
+    // How many bilerp/bicubic steps to do in X and Y. + means upscaling, - means downscaling.
+    int stepsX;
+    int stepsY;
+    if (rescaleQuality > kNone_SkFilterQuality) {
+        stepsX = static_cast<int>((sx > 1.f) ? std::ceil(std::log2f(sx))
+                                             : std::floor(std::log2f(sx)));
+        stepsY = static_cast<int>((sy > 1.f) ? std::ceil(std::log2f(sy))
+                                             : std::floor(std::log2f(sy)));
+    } else {
+        stepsX = sx != 1.f;
+        stepsY = sy != 1.f;
+    }
+
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    if (stepsX < 0 || stepsY < 0) {
+        // Don't trigger MIP generation. We don't currently have a way to trigger bicubic for
+        // downscaling draws.
+        rescaleQuality = std::min(rescaleQuality, kLow_SkFilterQuality);
+    }
+    paint.setFilterQuality(rescaleQuality);
+    sk_sp<SkSurface> src(SkRef(this));
+    int srcX = srcRect.fLeft;
+    int srcY = srcRect.fTop;
+    SkCanvas::SrcRectConstraint constraint = SkCanvas::kStrict_SrcRectConstraint;
+    // Assume we should ignore the rescale linear request if the surface has no color space since
+    // it's unclear how we'd linearize from an unknown color space.
+    if (rescaleGamma == SkSurface::RescaleGamma::kLinear &&
+        this->getCanvas()->imageInfo().colorSpace() &&
+        !this->getCanvas()->imageInfo().colorSpace()->gammaIsLinear()) {
+        auto cs = this->getCanvas()->imageInfo().colorSpace()->makeLinearGamma();
+        // Promote to F16 color type to preserve precision.
+        auto ii = SkImageInfo::Make(srcW, srcH, kRGBA_F16_SkColorType,
+                                    this->getCanvas()->imageInfo().alphaType(), std::move(cs));
+        auto linearSurf = this->makeSurface(ii);
+        if (!linearSurf) {
+            // Maybe F16 isn't supported? Try again with original color type.
+            ii = ii.makeColorType(this->getCanvas()->imageInfo().colorType());
+            linearSurf = this->makeSurface(ii);
+            if (!linearSurf) {
+                callback(context, nullptr, 0);
+                return;
+            }
+        }
+        this->draw(linearSurf->getCanvas(), -srcX, -srcY, &paint);
+        src = std::move(linearSurf);
+        srcX = 0;
+        srcY = 0;
+        constraint = SkCanvas::kFast_SrcRectConstraint;
+    }
+    while (stepsX || stepsY) {
+        int nextW = info.width();
+        int nextH = info.height();
+        if (stepsX < 0) {
+            nextW = info.width() << (-stepsX - 1);
+            stepsX++;
+        } else if (stepsX != 0) {
+            if (stepsX > 1) {
+                nextW = srcW * 2;
+            }
+            --stepsX;
+        }
+        if (stepsY < 0) {
+            nextH = info.height() << (-stepsY - 1);
+            stepsY++;
+        } else if (stepsY != 0) {
+            if (stepsY > 1) {
+                nextH = srcH * 2;
+            }
+            --stepsY;
+        }
+        auto ii = src->getCanvas()->imageInfo().makeWH(nextW, nextH);
+        if (!stepsX && !stepsY) {
+            // Might as well fold conversion to final info in the last step.
+            ii = info;
+        }
+        auto next = this->makeSurface(ii);
+        if (!next) {
+            callback(context, nullptr, 0);
+            return;
+        }
+        next->getCanvas()->drawImageRect(
+                src->makeImageSnapshot(), SkIRect::MakeXYWH(srcX, srcY, srcW, srcH),
+                SkRect::MakeWH((float)nextW, (float)nextH), &paint, constraint);
+        src = std::move(next);
+        srcX = srcY = 0;
+        srcW = nextW;
+        srcH = nextH;
+        constraint = SkCanvas::kFast_SrcRectConstraint;
+    }
+
     SkAutoPixmapStorage pm;
     pm.alloc(info);
-    if (this->readPixels(pm, srcX, srcY)) {
+    if (src->readPixels(pm, srcX, srcY)) {
         callback(context, pm.addr(), pm.rowBytes());
     } else {
         callback(context, nullptr, 0);
     }
+}
+
+void SkSurface_Base::onAsyncRescaleAndReadPixelsYUV420(
+        SkYUVColorSpace yuvColorSpace, sk_sp<SkColorSpace> dstColorSpace, const SkIRect& srcRect,
+        int dstW, int dstH, RescaleGamma rescaleGamma, SkFilterQuality rescaleQuality,
+        ReadPixelsCallbackYUV420 callback, ReadPixelsContext context) {
+    // TODO: Call non-YUV asyncRescaleAndReadPixels and then make our callback convert to YUV and
+    // call client's callback.
+    callback(context, nullptr, nullptr);
 }
 
 bool SkSurface_Base::outstandingImageSnapshot() const {
@@ -144,6 +256,10 @@ static SkSurface_Base* asSB(SkSurface* surface) {
     return static_cast<SkSurface_Base*>(surface);
 }
 
+static const SkSurface_Base* asConstSB(const SkSurface* surface) {
+    return static_cast<const SkSurface_Base*>(surface);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 SkSurface::SkSurface(int width, int height, const SkSurfaceProps* props)
@@ -160,6 +276,11 @@ SkSurface::SkSurface(const SkImageInfo& info, const SkSurfaceProps* props)
     SkASSERT(fWidth > 0);
     SkASSERT(fHeight > 0);
     fGenerationID = 0;
+}
+
+SkImageInfo SkSurface::imageInfo() {
+    // TODO: do we need to go through canvas for this?
+    return this->getCanvas()->imageInfo();
 }
 
 uint32_t SkSurface::generationID() {
@@ -199,6 +320,10 @@ sk_sp<SkSurface> SkSurface::makeSurface(const SkImageInfo& info) {
     return asSB(this)->onNewSurface(info);
 }
 
+sk_sp<SkSurface> SkSurface::makeSurface(int width, int height) {
+    return this->makeSurface(this->imageInfo().makeWH(width, height));
+}
+
 void SkSurface::draw(SkCanvas* canvas, SkScalar x, SkScalar y,
                      const SkPaint* paint) {
     return asSB(this)->onDraw(canvas, x, y, paint);
@@ -230,96 +355,22 @@ void SkSurface::asyncRescaleAndReadPixels(const SkImageInfo& info, const SkIRect
         callback(context, nullptr, 0);
         return;
     }
-    int srcW = srcRect.width();
-    int srcH = srcRect.height();
-    float sx = (float)info.width() / srcW;
-    float sy = (float)info.height() / srcH;
-    // How many bilerp/bicubic steps to do in X and Y. + means upscaling, - means downscaling.
-    int stepsX;
-    int stepsY;
-    if (rescaleQuality > kNone_SkFilterQuality) {
-        stepsX = static_cast<int>((sx > 1.f) ? std::ceil(std::log2f(sx))
-                                             : std::floor(std::log2f(sx)));
-        stepsY = static_cast<int>((sy > 1.f) ? std::ceil(std::log2f(sy))
-                                             : std::floor(std::log2f(sy)));
-    } else {
-        stepsX = sx != 1.f;
-        stepsY = sy != 1.f;
-    }
+    asSB(this)->onAsyncRescaleAndReadPixels(info, srcRect, rescaleGamma, rescaleQuality, callback,
+                                            context);
+}
 
-    SkPaint paint;
-    paint.setBlendMode(SkBlendMode::kSrc);
-    if (stepsX < 0 || stepsY < 0) {
-        // Don't trigger MIP generation. We don't currently have a way to trigger bicubic for
-        // downscaling draws.
-        rescaleQuality = std::min(rescaleQuality, kLow_SkFilterQuality);
+void SkSurface::asyncRescaleAndReadPixelsYUV420(
+        SkYUVColorSpace yuvColorSpace, sk_sp<SkColorSpace> dstColorSpace, const SkIRect& srcRect,
+        int dstW, int dstH, RescaleGamma rescaleGamma, SkFilterQuality rescaleQuality,
+        ReadPixelsCallbackYUV420 callback, ReadPixelsContext context) {
+    if (!SkIRect::MakeWH(this->width(), this->height()).contains(srcRect) || (dstW & 0b1) ||
+        (dstH & 0b1)) {
+        callback(context, nullptr, nullptr);
+        return;
     }
-    paint.setFilterQuality(rescaleQuality);
-    sk_sp<SkSurface> src(SkRef(this));
-    int srcX = srcRect.fLeft;
-    int srcY = srcRect.fTop;
-    if (rescaleGamma == SkSurface::RescaleGamma::kLinear &&
-        !this->getCanvas()->imageInfo().colorSpace()->gammaIsLinear()) {
-        auto cs = this->getCanvas()->imageInfo().colorSpace()->makeLinearGamma();
-        // Promote to F16 color type to preserve precision.
-        auto ii = SkImageInfo::Make(srcW, srcH, kRGBA_F16_SkColorType,
-                                    this->getCanvas()->imageInfo().alphaType(), std::move(cs));
-        auto linearSurf = this->makeSurface(ii);
-        if (!linearSurf) {
-            // Maybe F16 isn't supported? Try again with original color type.
-            ii = ii.makeColorType(this->getCanvas()->imageInfo().colorType());
-            linearSurf = this->makeSurface(ii);
-            if (!linearSurf) {
-                callback(context, nullptr, 0);
-                return;
-            }
-        }
-        this->draw(linearSurf->getCanvas(), -srcX, -srcY, &paint);
-        src = std::move(linearSurf);
-        srcX = 0;
-        srcY = 0;
-    }
-    while (stepsX || stepsY) {
-        int nextW = info.width();
-        int nextH = info.height();
-        if (stepsX < 0) {
-            nextW = info.width() << (-stepsX - 1);
-            stepsX++;
-        } else if (stepsX != 0) {
-            if (stepsX > 1) {
-                nextW = srcW * 2;
-            }
-            --stepsX;
-        }
-        if (stepsY < 0) {
-            nextH = info.height() << (-stepsY - 1);
-            stepsY++;
-        } else if (stepsY != 0) {
-            if (stepsY > 1) {
-                nextH = srcH * 2;
-            }
-            --stepsY;
-        }
-        auto ii = src->getCanvas()->imageInfo().makeWH(nextW, nextH);
-        if (!stepsX && !stepsY) {
-            // Might as well fold conversion to final info in the last step.
-            ii = info;
-        }
-        auto next = this->makeSurface(ii);
-        if (!next) {
-            callback(context, nullptr, 0);
-            return;
-        }
-        next->getCanvas()->drawImageRect(src->makeImageSnapshot(),
-                                         SkIRect::MakeXYWH(srcX, srcY, srcW, srcH),
-                                         SkRect::MakeWH((float)nextW, (float)nextH), &paint,
-                                         SkCanvas::kFast_SrcRectConstraint);
-        src = std::move(next);
-        srcX = srcY = 0;
-        srcW = nextW;
-        srcH = nextH;
-    }
-    static_cast<SkSurface_Base*>(src.get())->onAsyncReadPixels(info, srcX, srcY, callback, context);
+    asSB(this)->onAsyncRescaleAndReadPixelsYUV420(yuvColorSpace, std::move(dstColorSpace), srcRect,
+                                                  dstW, dstH, rescaleGamma, rescaleQuality,
+                                                  callback, context);
 }
 
 void SkSurface::writePixels(const SkPixmap& pmap, int x, int y) {
@@ -352,6 +403,14 @@ GrBackendTexture SkSurface::getBackendTexture(BackendHandleAccess access) {
 
 GrBackendRenderTarget SkSurface::getBackendRenderTarget(BackendHandleAccess access) {
     return asSB(this)->onGetBackendRenderTarget(access);
+}
+
+bool SkSurface::replaceBackendTexture(const GrBackendTexture& backendTexture,
+                                      GrSurfaceOrigin origin,
+                                      TextureReleaseProc textureReleaseProc,
+                                      ReleaseContext releaseContext) {
+    return asSB(this)->onReplaceBackendTexture(backendTexture, origin, textureReleaseProc,
+                                               releaseContext);
 }
 
 void SkSurface::flush() {
@@ -398,7 +457,11 @@ bool SkSurface::wait(int numSemaphores, const GrBackendSemaphore* waitSemaphores
 }
 
 bool SkSurface::characterize(SkSurfaceCharacterization* characterization) const {
-    return asSB(const_cast<SkSurface*>(this))->onCharacterize(characterization);
+    return asConstSB(this)->onCharacterize(characterization);
+}
+
+bool SkSurface::isCompatible(const SkSurfaceCharacterization& characterization) const {
+    return asConstSB(this)->onIsCompatible(characterization);
 }
 
 bool SkSurface::draw(SkDeferredDisplayList* ddl) {

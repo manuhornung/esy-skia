@@ -10,9 +10,9 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkString.h"
 #include "include/core/SkUnPreMultiply.h"
-#include "include/private/SkArenaAlloc.h"
 #include "include/private/SkColorData.h"
 #include "include/private/SkTo.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkEffectPriv.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
@@ -399,7 +399,8 @@ std::unique_ptr<GrFragmentProcessor> ColorTableEffect::TestCreate(GrProcessorTes
     ));
     sk_sp<SkColorSpace> colorSpace = GrTest::TestColorSpace(d->fRandom);
     auto fp = filter->asFragmentProcessor(
-            d->context(), GrColorSpaceInfo(std::move(colorSpace), kRGBA_8888_GrPixelConfig));
+            d->context(), GrColorSpaceInfo(GrColorType::kRGBA_8888, kUnknown_SkAlphaType,
+                                           std::move(colorSpace)));
     SkASSERT(fp);
     return fp;
 }

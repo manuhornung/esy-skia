@@ -98,6 +98,8 @@ public:
     sk_sp<SkImage> onMakeColorTypeAndColorSpace(GrRecordingContext*,
                                                 SkColorType, sk_sp<SkColorSpace>) const override;
 
+    sk_sp<SkImage> onReinterpretColorSpace(sk_sp<SkColorSpace>) const override;
+
     bool onIsValid(GrContext* context) const override { return true; }
     void notifyAddedToRasterCache() const override {
         // We explicitly DON'T want to call INHERITED::notifyAddedToRasterCache. That ties the
@@ -174,8 +176,9 @@ sk_sp<GrTextureProxy> SkImage_Raster::asTextureProxyRef(GrRecordingContext* cont
     uint32_t uniqueID;
     sk_sp<GrTextureProxy> tex = this->refPinnedTextureProxy(context, &uniqueID);
     if (tex) {
-        GrTextureAdjuster adjuster(context, fPinnedProxy, fBitmap.alphaType(), fPinnedUniqueID,
-                                   fBitmap.colorSpace());
+        GrTextureAdjuster adjuster(context, fPinnedProxy,
+                                   SkColorTypeToGrColorType(fBitmap.colorType()),
+                                   fBitmap.alphaType(), fPinnedUniqueID, fBitmap.colorSpace());
         return adjuster.refTextureProxyForParams(params, scaleAdjust);
     }
 
@@ -345,4 +348,13 @@ sk_sp<SkImage> SkImage_Raster::onMakeColorTypeAndColorSpace(GrRecordingContext*,
     SkAssertResult(dst.writePixels(src));
     dst.setImmutable();
     return SkImage::MakeFromBitmap(dst);
+}
+
+sk_sp<SkImage> SkImage_Raster::onReinterpretColorSpace(sk_sp<SkColorSpace> newCS) const {
+    // TODO: If our bitmap is immutable, then we could theoretically create another image sharing
+    // our pixelRef. That doesn't work (without more invasive logic), because the image gets its
+    // gen ID from the bitmap, which gets it from the pixelRef.
+    SkPixmap pixmap = fBitmap.pixmap();
+    pixmap.setColorSpace(std::move(newCS));
+    return SkImage::MakeRasterCopy(pixmap);
 }

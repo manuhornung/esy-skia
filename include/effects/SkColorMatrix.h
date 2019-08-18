@@ -16,6 +16,14 @@ public:
     void setIdentity();
     void setScale(float rScale, float gScale, float bScale, float aScale = 1.0f);
 
+    void setRowMajor(const float src[20]) {
+        memcpy(fMat, src, sizeof(fMat));
+    }
+
+    void getRowMajor(float dst[20]) const {
+        memcpy(dst, fMat, sizeof(fMat));
+    }
+
     enum Axis {
         kR_Axis = 0,
         kG_Axis = 1,
@@ -40,6 +48,14 @@ public:
     }
 
     bool operator!=(const SkColorMatrix& other) const { return !((*this) == other); }
+
+    float* get20(float m[20]) const {
+        memcpy(m, fMat, sizeof(fMat));
+        return m;
+    }
+    void set20(const float m[20]) {
+        memcpy(fMat, m, sizeof(fMat));
+    }
 
 private:
     float fMat[20];

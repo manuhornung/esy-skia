@@ -20,20 +20,20 @@
 
 #if SK_SUPPORT_GPU
 #include "include/private/GrRecordingContext.h"
-#include "include/private/GrTextureProxy.h"
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrFragmentProcessor.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrShaderCaps.h"
-#include "src/gpu/GrShape.h"
 #include "src/gpu/GrStyle.h"
+#include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/effects/GrTextureDomain.h"
 #include "src/gpu/effects/generated/GrCircleBlurFragmentProcessor.h"
 #include "src/gpu/effects/generated/GrRRectBlurEffect.h"
 #include "src/gpu/effects/generated/GrRectBlurEffect.h"
 #include "src/gpu/effects/generated/GrSimpleTextureEffect.h"
+#include "src/gpu/geometry/GrShape.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLProgramDataManager.h"
@@ -699,7 +699,7 @@ sk_sp<SkFlattenable> SkBlurMaskFilterImpl::CreateProc(SkReadBuffer& buffer) {
     uint32_t flags = buffer.read32LE(0x3);  // historically we only recorded 2 bits
     bool respectCTM = !(flags & 1); // historically we stored ignoreCTM in low bit
 
-    if (buffer.isVersionLT(SkReadBuffer::kRemoveOccluderFromBlurMaskFilter)) {
+    if (buffer.isVersionLT(SkPicturePriv::kRemoveOccluderFromBlurMaskFilter)) {
         SkRect unused;
         buffer.readRect(&unused);
     }
@@ -762,11 +762,8 @@ bool SkBlurMaskFilterImpl::directFilterMaskGPU(GrRecordingContext* context,
 
     if (devRRect.isRect() || SkRRectPriv::IsCircle(devRRect)) {
         if (devRRect.isRect()) {
-            SkScalar pad = 3.0f * xformedSigma;
-            const SkRect dstCoverageRect = devRRect.rect().makeOutset(pad, pad);
-
             fp = GrRectBlurEffect::Make(proxyProvider, *context->priv().caps()->shaderCaps(),
-                                        dstCoverageRect, xformedSigma);
+                                        devRRect.rect(), xformedSigma);
         } else {
             fp = GrCircleBlurFragmentProcessor::Make(proxyProvider, devRRect.rect(), xformedSigma);
         }
@@ -884,6 +881,7 @@ sk_sp<GrTextureProxy> SkBlurMaskFilterImpl::filterMaskGPU(GrRecordingContext* co
     sk_sp<GrRenderTargetContext> renderTargetContext(
               SkGpuBlurUtils::GaussianBlur(context,
                                            srcProxy,
+                                           SkIPoint::Make(0, 0),
                                            nullptr,
                                            clipRect,
                                            SkIRect::EmptyIRect(),

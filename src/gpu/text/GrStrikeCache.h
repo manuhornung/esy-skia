@@ -8,8 +8,8 @@
 #ifndef GrStrikeCache_DEFINED
 #define GrStrikeCache_DEFINED
 
-#include "include/private/SkArenaAlloc.h"
 #include "src/codec/SkMasks.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkStrike.h"
 #include "src/core/SkTDynamicHash.h"
 #include "src/gpu/GrDrawOpAtlas.h"
@@ -49,8 +49,7 @@ public:
             // We could return this to the caller, but in practice it adds code complexity for
             // potentially little benefit(ie, if the glyph is not in our font cache, then its not
             // in the atlas and we're going to be doing a texture upload anyways).
-            const SkGlyph& skGlyph = skStrike->getGlyphIDMetrics(packed);
-            grGlyph = fAlloc.make<GrGlyph>(skGlyph);
+            grGlyph = fAlloc.make<GrGlyph>(*skStrike->glyph(packed));
             fCache.add(grGlyph);
         }
         return grGlyph;

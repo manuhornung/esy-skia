@@ -12,7 +12,7 @@
 #include "include/core/SkImage.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkMatrix.h"
-#include "include/effects/SkColorFilterImageFilter.h"
+#include "include/effects/SkImageFilters.h"
 #include "src/core/SkImageFilterCache.h"
 #include "src/core/SkSpecialImage.h"
 
@@ -30,7 +30,7 @@ static SkBitmap create_bm() {
 static sk_sp<SkImageFilter> make_filter() {
     sk_sp<SkColorFilter> filter(SkColorFilters::Blend(SK_ColorBLUE,
                                                               SkBlendMode::kSrcIn));
-    return SkColorFilterImageFilter::Make(std::move(filter), nullptr, nullptr);
+    return SkImageFilters::ColorFilter(std::move(filter), nullptr, nullptr);
 }
 
 // Ensure the cache can return a cached image
@@ -193,17 +193,16 @@ DEF_TEST(ImageFilterCache_ImageBackedRaster, reporter) {
 
 #include "include/gpu/GrContext.h"
 #include "include/gpu/GrTexture.h"
-#include "include/private/GrTextureProxy.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrSurfaceProxyPriv.h"
+#include "src/gpu/GrTextureProxy.h"
 
 static sk_sp<GrTextureProxy> create_proxy(GrProxyProvider* proxyProvider) {
     SkBitmap srcBM = create_bm();
     sk_sp<SkImage> srcImage(SkImage::MakeFromBitmap(srcBM));
-    return proxyProvider->createTextureProxy(srcImage, kNone_GrSurfaceFlags, 1,
-                                             SkBudgeted::kYes, SkBackingFit::kExact);
+    return proxyProvider->createTextureProxy(srcImage, 1, SkBudgeted::kYes, SkBackingFit::kExact);
 }
 
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ImageFilterCache_ImageBackedGPU, reporter, ctxInfo) {

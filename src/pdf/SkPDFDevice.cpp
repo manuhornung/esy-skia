@@ -28,11 +28,13 @@
 #include "src/core/SkDraw.h"
 #include "src/core/SkGlyphRun.h"
 #include "src/core/SkImageFilterCache.h"
+#include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkMakeUnique.h"
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkRasterClip.h"
 #include "src/core/SkScopeExit.h"
 #include "src/core/SkStrike.h"
+#include "src/core/SkStrikeSpec.h"
 #include "src/core/SkTextFormatParams.h"
 #include "src/core/SkXfermodeInterpretation.h"
 #include "src/pdf/SkBitmapKey.h"
@@ -710,14 +712,10 @@ struct PositionedGlyph {
 };
 }
 
-static SkRect get_glyph_bounds_device_space(SkGlyphID gid, SkStrike* cache,
+static SkRect get_glyph_bounds_device_space(const SkGlyph* glyph,
                                             SkScalar xScale, SkScalar yScale,
                                             SkPoint xy, const SkMatrix& ctm) {
-    const SkGlyph& glyph = cache->getGlyphIDMetrics(gid);
-    SkRect glyphBounds = {glyph.fLeft * xScale,
-                          glyph.fTop * yScale,
-                          (glyph.fLeft + glyph.fWidth) * xScale,
-                          (glyph.fTop + glyph.fHeight) * yScale};
+    SkRect glyphBounds = SkMatrix::MakeScale(xScale, yScale).mapRect(glyph->rect());
     glyphBounds.offset(xy);
     ctm.mapRect(&glyphBounds); // now in dev space.
     return glyphBounds;
@@ -769,20 +767,19 @@ void SkPDFDevice::drawGlyphRunAsPath(
     }
 }
 
-static bool needs_new_font(SkPDFFont* font, SkGlyphID gid, SkStrike* cache,
+static bool needs_new_font(SkPDFFont* font, const SkGlyph* glyph,
                            SkAdvancedTypefaceMetrics::FontType fontType) {
-    if (!font || !font->hasGlyph(gid)) {
+    if (!font || !font->hasGlyph(glyph->getGlyphID())) {
         return true;
     }
     if (fontType == SkAdvancedTypefaceMetrics::kOther_Font) {
         return false;
     }
-    const SkGlyph& glyph = cache->getGlyphIDMetrics(gid);
-    if (glyph.isEmpty()) {
+    if (glyph->isEmpty()) {
         return false;
     }
 
-    bool bitmapOnly = nullptr == cache->findPath(glyph);
+    bool bitmapOnly = nullptr == glyph->path();
     bool convertedToType3 = (font->getType() == SkAdvancedTypefaceMetrics::kOther_Font);
     return convertedToType3 != bitmapOnly;
 }
@@ -790,11 +787,11 @@ static bool needs_new_font(SkPDFFont* font, SkGlyphID gid, SkStrike* cache,
 void SkPDFDevice::internalDrawGlyphRun(
         const SkGlyphRun& glyphRun, SkPoint offset, const SkPaint& runPaint) {
 
-    const SkGlyphID* glyphs = glyphRun.glyphsIDs().data();
+    const SkGlyphID* glyphIDs = glyphRun.glyphsIDs().data();
     uint32_t glyphCount = SkToU32(glyphRun.glyphsIDs().size());
     const SkFont& glyphRunFont = glyphRun.font();
 
-    if (!glyphCount || !glyphs || glyphRunFont.getSize() <= 0 || this->hasEmptyClip()) {
+    if (!glyphCount || !glyphIDs || glyphRunFont.getSize() <= 0 || this->hasEmptyClip()) {
         return;
     }
     if (runPaint.getPathEffect()
@@ -823,7 +820,7 @@ void SkPDFDevice::internalDrawGlyphRun(
     SkClusterator clusterator(glyphRun);
 
     int emSize;
-    auto glyphCache = SkPDFFont::MakeVectorCache(typeface, &emSize);
+    SkStrikeSpec strikeSpec = SkStrikeSpec::MakePDFVector(*typeface, &emSize);
 
     SkScalar textSize = glyphRunFont.getSize();
     SkScalar advanceScale = textSize * glyphRunFont.getScaleX() / emSize;
@@ -866,6 +863,9 @@ void SkPDFDevice::internalDrawGlyphRun(
     GlyphPositioner glyphPositioner(out, glyphRunFont.getSkewX(), offset);
     SkPDFFont* font = nullptr;
 
+    SkBulkGlyphMetricsAndPaths paths{strikeSpec};
+    auto glyphs = paths.glyphs(glyphRun.glyphsIDs());
+
     while (SkClusterator::Cluster c = clusterator.next()) {
         int index = c.fGlyphIndex;
         int glyphLimit = index + c.fGlyphCount;
@@ -885,7 +885,7 @@ void SkPDFDevice::internalDrawGlyphRun(
             }
             if (textPtr < textEnd ||                                  // more characters left
                 glyphLimit > index + 1 ||                             // toUnicode wouldn't work
-                unichar != map_glyph(glyphToUnicode, glyphs[index]))  // test single Unichar map
+                unichar != map_glyph(glyphToUnicode, glyphIDs[index]))  // test single Unichar map
             {
                 glyphPositioner.flush();
                 out->writeText("/Span<</ActualText <");
@@ -905,14 +905,14 @@ void SkPDFDevice::internalDrawGlyphRun(
             }
         }
         for (; index < glyphLimit; ++index) {
-            SkGlyphID gid = glyphs[index];
+            SkGlyphID gid = glyphIDs[index];
             if (gid > maxGlyphID) {
                 continue;
             }
             SkPoint xy = glyphRun.positions()[index];
             // Do a glyph-by-glyph bounds-reject if positions are absolute.
             SkRect glyphBounds = get_glyph_bounds_device_space(
-                    gid, glyphCache.get(), textScaleX, textScaleY,
+                    glyphs[index], textScaleX, textScaleY,
                     xy + offset, this->ctm());
             if (glyphBounds.isEmpty()) {
                 if (!contains(clipStackBounds, {glyphBounds.x(), glyphBounds.y()})) {
@@ -923,9 +923,9 @@ void SkPDFDevice::internalDrawGlyphRun(
                     continue;  // reject glyphs as out of bounds
                 }
             }
-            if (needs_new_font(font, gid, glyphCache.get(), fontType)) {
+            if (needs_new_font(font, glyphs[index], fontType)) {
                 // Not yet specified font or need to switch font.
-                font = SkPDFFont::GetFontResource(fDocument, glyphCache.get(), typeface, gid);
+                font = SkPDFFont::GetFontResource(fDocument, glyphs[index], typeface);
                 SkASSERT(font);  // All preconditions for SkPDFFont::GetFontResource are met.
                 glyphPositioner.flush();
                 glyphPositioner.setWideChars(font->multiByteGlyphs());
@@ -939,7 +939,7 @@ void SkPDFDevice::internalDrawGlyphRun(
             font->noteGlyphUsage(gid);
             SkGlyphID encodedGlyph = font->multiByteGlyphs()
                                    ? gid : font->glyphToPDFFontEncoding(gid);
-            SkScalar advance = advanceScale * glyphCache->getGlyphIDAdvance(gid).fAdvanceX;
+            SkScalar advance = advanceScale * glyphs[index]->advanceX();
             glyphPositioner.writeGlyph(xy, advance, encodedGlyph);
         }
     }
@@ -1210,7 +1210,7 @@ static void populate_graphic_state_entry_from_paint(
             clipStackBounds.roundOut(&bounds);
 
             SkPDFIndirectReference pdfShader
-                = SkPDFMakeShader(doc, shader, transform, bounds, paint.getColor());
+                = SkPDFMakeShader(doc, shader, transform, bounds, paint.getColor4f());
 
             if (pdfShader) {
                 // pdfShader has been canonicalized so we can directly compare pointers.
@@ -1729,10 +1729,10 @@ void SkPDFDevice::drawSpecial(SkSpecialImage* srcImg, int x, int y, const SkPain
         sk_sp<SkImageFilterCache> cache(this->getImageFilterCache());
         // TODO: Should PDF be operating in a specified color type/space? For now, run the filter
         // in the same color space as the source (this is different from all other backends).
-        SkImageFilter::OutputProperties outputProperties(kN32_SkColorType, srcImg->getColorSpace());
-        SkImageFilter::Context ctx(matrix, clipBounds, cache.get(), outputProperties);
+        SkImageFilter_Base::Context ctx(matrix, clipBounds, cache.get(), kN32_SkColorType,
+                                        srcImg->getColorSpace(), srcImg);
 
-        sk_sp<SkSpecialImage> resultImg(filter->filterImage(srcImg, ctx, &offset));
+        sk_sp<SkSpecialImage> resultImg(as_IFB(filter)->filterImage(ctx, &offset));
         if (resultImg) {
             SkPaint tmpUnfiltered(paint);
             tmpUnfiltered.setImageFilter(nullptr);

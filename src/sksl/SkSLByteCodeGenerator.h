@@ -8,8 +8,8 @@
 #ifndef SKSL_BYTECODEGENERATOR
 #define SKSL_BYTECODEGENERATOR
 
+#include <algorithm>
 #include <stack>
-#include <tuple>
 #include <unordered_map>
 
 #include "src/sksl/SkSLByteCode.h"
@@ -22,8 +22,9 @@
 #include "src/sksl/ir/SkSLConstructor.h"
 #include "src/sksl/ir/SkSLContinueStatement.h"
 #include "src/sksl/ir/SkSLDoStatement.h"
-#include "src/sksl/ir/SkSLExternalValueReference.h"
 #include "src/sksl/ir/SkSLExpressionStatement.h"
+#include "src/sksl/ir/SkSLExternalFunctionCall.h"
+#include "src/sksl/ir/SkSLExternalValueReference.h"
 #include "src/sksl/ir/SkSLFieldAccess.h"
 #include "src/sksl/ir/SkSLFloatLiteral.h"
 #include "src/sksl/ir/SkSLForStatement.h"
@@ -70,17 +71,14 @@ public:
          * Stack before call: ... lvalue value
          * Stack after call: ...
          */
-        virtual void store() = 0;
+        virtual void store(bool discard) = 0;
 
     protected:
         ByteCodeGenerator& fGenerator;
     };
 
     ByteCodeGenerator(const Context* context, const Program* program, ErrorReporter* errors,
-                      ByteCode* output)
-    : INHERITED(program, errors, nullptr)
-    , fContext(*context)
-    , fOutput(output) {}
+                      ByteCode* output);
 
     bool generateCode() override;
 
@@ -90,7 +88,7 @@ public:
 
     void write32(uint32_t b);
 
-    void write(ByteCodeInstruction inst);
+    void write(ByteCodeInstruction inst, int count = kUnusedStackCount);
 
     /**
      * Based on 'type', writes the s (signed), u (unsigned), or f (float) instruction.
@@ -98,7 +96,12 @@ public:
     void writeTypedInstruction(const Type& type, ByteCodeInstruction s, ByteCodeInstruction u,
                                ByteCodeInstruction f, int count);
 
+    static int SlotCount(const Type& type);
+
 private:
+    static constexpr int kUnusedStackCount = INT32_MAX;
+    static int StackUsage(ByteCodeInstruction, int count);
+
     // reserves 16 bits in the output code, to be filled in later with an address once we determine
     // it
     class DeferredLocation {
@@ -133,37 +136,32 @@ private:
 #endif
     };
 
-    class DeferredCallTarget {
-    public:
-        DeferredCallTarget(ByteCodeGenerator* generator, const FunctionDeclaration& function)
-                : fGenerator(*generator)
-                , fCode(generator->fCode)
-                , fOffset(generator->fCode->size())
-                , fFunction(function) {
-            generator->write8(0);
-        }
+    // Intrinsics which do not simply map to a single opcode
+    enum class SpecialIntrinsic {
+        kDot,
+    };
 
-        bool set() {
-            size_t idx;
-            const auto& functions(fGenerator.fOutput->fFunctions);
-            for (idx = 0; idx < functions.size(); ++idx) {
-                if (fFunction.matches(functions[idx]->fDeclaration)) {
-                    break;
-                }
-            }
-            if (idx > 255 || idx > functions.size()) {
-                SkASSERT(false);
-                return false;
-            }
-            (*fCode)[fOffset] = idx;
-            return true;
-        }
+    struct Intrinsic {
+        Intrinsic(ByteCodeInstruction instruction)
+            : fIsSpecial(false)
+            , fValue(instruction) {}
 
-    private:
-        ByteCodeGenerator& fGenerator;
-        std::vector<uint8_t>* fCode;
-        size_t fOffset;
-        const FunctionDeclaration& fFunction;
+        Intrinsic(SpecialIntrinsic special)
+            : fIsSpecial(true)
+            , fValue(special) {}
+
+        bool fIsSpecial;
+
+        union Value {
+            Value(ByteCodeInstruction instruction)
+                : fInstruction(instruction) {}
+
+            Value(SpecialIntrinsic special)
+                : fSpecial(special) {}
+
+            ByteCodeInstruction fInstruction;
+            SpecialIntrinsic fSpecial;
+        } fValue;
     };
 
     /**
@@ -173,13 +171,20 @@ private:
      */
     int getLocation(const Variable& var);
 
+    /**
+     * As above, but computes the (possibly dynamic) address of an expression involving indexing &
+     * field access. If the address is known, it's returned. If not, -1 is returned, and the
+     * location will be left on the top of the stack.
+     */
+    int getLocation(const Expression& expr, Variable::Storage* storage);
+
     std::unique_ptr<ByteCodeFunction> writeFunction(const FunctionDefinition& f);
 
     void writeVarDeclarations(const VarDeclarations& decl);
 
-    void writeVariableReference(const VariableReference& ref);
+    void writeVariableExpression(const Expression& expr);
 
-    void writeExpression(const Expression& expr);
+    void writeExpression(const Expression& expr, bool discard = false);
 
     /**
      * Pushes whatever values are required by the lvalue onto the stack, and returns an LValue
@@ -187,31 +192,27 @@ private:
      */
     std::unique_ptr<LValue> getLValue(const Expression& expr);
 
+    void writeIntrinsicCall(const FunctionCall& c);
+
     void writeFunctionCall(const FunctionCall& c);
 
     void writeConstructor(const Constructor& c);
 
-    void writeExternalValue(const ExternalValueReference& r);
+    void writeExternalFunctionCall(const ExternalFunctionCall& c);
 
-    void writeFieldAccess(const FieldAccess& f);
+    void writeExternalValue(const ExternalValueReference& r);
 
     void writeSwizzle(const Swizzle& swizzle);
 
-    void writeBinaryExpression(const BinaryExpression& b);
+    bool writeBinaryExpression(const BinaryExpression& b, bool discard);
 
     void writeTernaryExpression(const TernaryExpression& t);
 
-    void writeIndexExpression(const IndexExpression& expr);
-
-    void writeLogicalAnd(const BinaryExpression& b);
-
-    void writeLogicalOr(const BinaryExpression& o);
-
     void writeNullLiteral(const NullLiteral& n);
 
-    void writePrefixExpression(const PrefixExpression& p);
+    bool writePrefixExpression(const PrefixExpression& p, bool discard);
 
-    void writePostfixExpression(const PostfixExpression& p);
+    bool writePostfixExpression(const PostfixExpression& p, bool discard);
 
     void writeBoolLiteral(const BoolLiteral& b);
 
@@ -245,6 +246,26 @@ private:
     // updates the current set of continues to branch to the current location
     void setContinueTargets();
 
+    void enterLoop() {
+        fLoopCount++;
+        fMaxLoopCount = std::max(fMaxLoopCount, fLoopCount);
+    }
+
+    void exitLoop() {
+        SkASSERT(fLoopCount > 0);
+        fLoopCount--;
+    }
+
+    void enterCondition() {
+        fConditionCount++;
+        fMaxConditionCount = std::max(fMaxConditionCount, fConditionCount);
+    }
+
+    void exitCondition() {
+        SkASSERT(fConditionCount > 0);
+        fConditionCount--;
+    }
+
     const Context& fContext;
 
     ByteCode* fOutput;
@@ -259,12 +280,21 @@ private:
 
     std::stack<std::vector<DeferredLocation>> fBreakTargets;
 
-    std::vector<DeferredCallTarget> fCallTargets;
+    std::vector<const FunctionDefinition*> fFunctions;
 
     int fParameterCount;
+    int fStackCount;
+    int fMaxStackCount;
+
+    int fLoopCount;
+    int fMaxLoopCount;
+    int fConditionCount;
+    int fMaxConditionCount;
+
+    const std::unordered_map<String, Intrinsic> fIntrinsics;
 
     friend class DeferredLocation;
-    friend class ByteCodeVariableLValue;
+    friend class ByteCodeExpressionLValue;
     friend class ByteCodeSwizzleLValue;
 
     typedef CodeGenerator INHERITED;

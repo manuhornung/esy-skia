@@ -310,7 +310,7 @@ static const char* slant_to_string(SkFontStyle::Slant slant) {
         case SkFontStyle::kUpright_Slant: return "SkFontStyle::kUpright_Slant";
         case SkFontStyle::kItalic_Slant : return "SkFontStyle::kItalic_Slant" ;
         case SkFontStyle::kOblique_Slant: return "SkFontStyle::kOblique_Slant";
-        default: SK_ABORT("Unknown slant"); return "";
+        default: SK_ABORT("Unknown slant");
     }
 }
 
@@ -406,12 +406,12 @@ int main(int , char * const []) {
     };
 
     static constexpr FontFamilyDesc kFamiliesData[] = {
-        {"monospace",  "Liberation Mono",  "LiberationMono",  { kMonoFonts  }},
-        {"sans-serif", "Liberation Sans",  "LiberationSans",  { kSansFonts  }},
-        {"serif",      "Liberation Serif", "LiberationSerif", { kSerifFonts }},
+        {"monospace",  "Liberation Mono",  "LiberationMono",  SkMakeSpan(kMonoFonts)},
+        {"sans-serif", "Liberation Sans",  "LiberationSans",  SkMakeSpan(kSansFonts)},
+        {"serif",      "Liberation Serif", "LiberationSerif", SkMakeSpan(kSerifFonts)},
     };
 
-    static constexpr SkSpan<const FontFamilyDesc> kFamilies(kFamiliesData);
+    static constexpr SkSpan<const FontFamilyDesc> kFamilies(SkMakeSpan(kFamiliesData));
 
 #ifdef SK_BUILD_FOR_UNIX
     generate_fonts("/usr/share/fonts/truetype/liberation/", kFamilies);

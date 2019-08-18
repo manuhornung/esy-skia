@@ -30,26 +30,37 @@ public:
     GrVkCaps(const GrContextOptions& contextOptions, const GrVkInterface* vkInterface,
              VkPhysicalDevice device, const VkPhysicalDeviceFeatures2& features,
              uint32_t instanceVersion, uint32_t physicalDeviceVersion,
-             const GrVkExtensions& extensions);
+             const GrVkExtensions& extensions, GrProtected isProtected = GrProtected::kNo);
 
-    bool isFormatTexturable(VkFormat) const;
-    bool isConfigTexturable(GrPixelConfig config) const override;
+    bool isFormatSRGB(const GrBackendFormat&) const override;
+    bool isFormatCompressed(const GrBackendFormat&) const override;
 
-    bool isConfigCopyable(GrPixelConfig config) const override {
-        return true;
-    }
 
-    bool isFormatRenderable(VkFormat) const;
+    bool isFormatTexturableAndUploadable(GrColorType, const GrBackendFormat&) const override;
+    bool isFormatTexturable(const GrBackendFormat&) const override;
+    bool isVkFormatTexturable(VkFormat) const;
 
-    int getRenderTargetSampleCount(int requestedCount, GrPixelConfig config) const override;
+    bool isFormatCopyable(const GrBackendFormat&) const override { return true; }
+
+    bool isFormatAsColorTypeRenderable(GrColorType ct, const GrBackendFormat& format,
+                                       int sampleCount = 1) const override;
+    bool isFormatRenderable(const GrBackendFormat& format, int sampleCount) const override;
+    bool isFormatRenderable(VkFormat, int sampleCount) const;
+
+    int getRenderTargetSampleCount(int requestedCount, const GrBackendFormat&) const override;
     int getRenderTargetSampleCount(int requestedCount, VkFormat) const;
-    int maxRenderTargetSampleCount(GrPixelConfig config) const override;
+
+    int maxRenderTargetSampleCount(const GrBackendFormat&) const override;
     int maxRenderTargetSampleCount(VkFormat format) const;
 
-    bool surfaceSupportsReadPixels(const GrSurface*) const override;
+    SupportedWrite supportedWritePixelsColorType(GrColorType surfaceColorType,
+                                                 const GrBackendFormat& surfaceFormat,
+                                                 GrColorType srcColorType) const override;
 
-    bool isFormatTexturableLinearly(VkFormat format) const {
-        return SkToBool(FormatInfo::kTextureable_Flag & this->getFormatInfo(format).fLinearFlags);
+    SurfaceReadPixelsSupport surfaceSupportsReadPixels(const GrSurface*) const override;
+
+    bool isVkFormatTexturableLinearly(VkFormat format) const {
+        return SkToBool(FormatInfo::kTexturable_Flag & this->getFormatInfo(format).fLinearFlags);
     }
 
     bool formatCanBeDstofBlit(VkFormat format, bool linearTiled) const {
@@ -75,13 +86,6 @@ public:
     // destroying the command buffers. Therefore we add a sleep to make sure the fence signals.
     bool mustSleepOnTearDown() const {
         return fMustSleepOnTearDown;
-    }
-
-    // Returns true if while adding commands to command buffers, we must make a new command buffer
-    // everytime we want to bind a new VkPipeline. This is true for both primary and secondary
-    // command buffers. This is to work around a driver bug specifically on AMD.
-    bool newCBOnPipelineChange() const {
-        return fNewCBOnPipelineChange;
     }
 
     // Returns true if we should always make dedicated allocations for VkImages.
@@ -134,40 +138,45 @@ public:
     // Returns true if it supports ycbcr conversion for samplers
     bool supportsYcbcrConversion() const { return fSupportsYcbcrConversion; }
 
+    // Returns true if the device supports protected memory.
+    bool supportsProtectedMemory() const { return fSupportsProtectedMemory; }
+
     /**
      * Helpers used by canCopySurface. In all cases if the SampleCnt parameter is zero that means
      * the surface is not a render target, otherwise it is the number of samples in the render
      * target.
      */
-    bool canCopyImage(GrPixelConfig dstConfig, int dstSampleCnt, GrSurfaceOrigin dstOrigin,
-                      bool dstHasYcbcr, GrPixelConfig srcConfig, int srcSamplecnt,
-                      GrSurfaceOrigin srcOrigin, bool srcHasYcbcr) const;
+    bool canCopyImage(VkFormat dstFormat, int dstSampleCnt, bool dstHasYcbcr,
+                      VkFormat srcFormat, int srcSamplecnt, bool srcHasYcbcr) const;
 
-    bool canCopyAsBlit(GrPixelConfig dstConfig, int dstSampleCnt, bool dstIsLinear,
-                       bool dstHasYcbcr, GrPixelConfig srcConfig, int srcSampleCnt,
-                       bool srcIsLinear, bool srcHasYcbcr) const;
+    bool canCopyAsBlit(VkFormat dstConfig, int dstSampleCnt, bool dstIsLinear, bool dstHasYcbcr,
+                       VkFormat srcConfig, int srcSampleCnt, bool srcIsLinear,
+                       bool srcHasYcbcr) const;
 
-    bool canCopyAsResolve(GrPixelConfig dstConfig, int dstSampleCnt, GrSurfaceOrigin dstOrigin,
-                          bool dstHasYcbcr, GrPixelConfig srcConfig, int srcSamplecnt,
-                          GrSurfaceOrigin srcOrigin, bool srcHasYcbcr) const;
+    bool canCopyAsResolve(VkFormat dstConfig, int dstSampleCnt, bool dstHasYcbcr,
+                          VkFormat srcConfig, int srcSamplecnt, bool srcHasYcbcr) const;
 
-    bool canCopyAsDraw(GrPixelConfig dstConfig, bool dstIsRenderable, bool dstHasYcbcr,
-                       GrPixelConfig srcConfig, bool srcIsTextureable, bool srcHasYcbcr) const;
+    GrColorType getYUVAColorTypeFromBackendFormat(const GrBackendFormat&,
+                                                  bool isAlphaChannel) const override;
 
-    bool initDescForDstCopy(const GrRenderTargetProxy* src, GrSurfaceDesc* desc, GrSurfaceOrigin*,
-                            bool* rectsMustMatch, bool* disallowSubrect) const override;
+    GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const override;
 
-    GrPixelConfig validateBackendRenderTarget(const GrBackendRenderTarget&,
-                                              SkColorType) const override;
+    VkFormat getFormatFromColorType(GrColorType colorType) const {
+        int idx = static_cast<int>(colorType);
+        return fColorTypeToFormatTable[idx];
+    }
 
-    GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat&, SkColorType) const override;
-    GrPixelConfig getYUVAConfigFromBackendFormat(const GrBackendFormat&) const override;
-
-    GrBackendFormat getBackendFormatFromGrColorType(GrColorType ct,
-                                                    GrSRGBEncoded srgbEncoded) const override;
+    bool canClearTextureOnCreation() const override;
 
     GrSwizzle getTextureSwizzle(const GrBackendFormat&, GrColorType) const override;
     GrSwizzle getOutputSwizzle(const GrBackendFormat&, GrColorType) const override;
+
+    int getFragmentUniformBinding() const;
+    int getFragmentUniformSet() const;
+
+#if GR_TEST_UTILS
+    std::vector<TestFormatColorTypeCombination> getTestingCombinations() const override;
+#endif
 
 private:
     enum VkVendor {
@@ -181,7 +190,7 @@ private:
 
     void init(const GrContextOptions& contextOptions, const GrVkInterface* vkInterface,
               VkPhysicalDevice device, const VkPhysicalDeviceFeatures2&,
-              uint32_t physicalDeviceVersion, const GrVkExtensions&);
+              uint32_t physicalDeviceVersion, const GrVkExtensions&, GrProtected isProtected);
     void initGrCaps(const GrVkInterface* vkInterface,
                     VkPhysicalDevice physDev,
                     const VkPhysicalDeviceProperties&,
@@ -193,40 +202,76 @@ private:
     void initFormatTable(const GrVkInterface*, VkPhysicalDevice, const VkPhysicalDeviceProperties&);
     void initStencilFormat(const GrVkInterface* iface, VkPhysicalDevice physDev);
 
-    uint8_t getYcbcrKeyFromYcbcrInfo(const GrVkYcbcrConversionInfo& info);
-
     void applyDriverCorrectnessWorkarounds(const VkPhysicalDeviceProperties&);
 
     bool onSurfaceSupportsWritePixels(const GrSurface*) const override;
     bool onCanCopySurface(const GrSurfaceProxy* dst, const GrSurfaceProxy* src,
                           const SkIRect& srcRect, const SkIPoint& dstPoint) const override;
-    size_t onTransferFromOffsetAlignment(GrColorType bufferColorType) const override;
+    GrBackendFormat onGetDefaultBackendFormat(GrColorType, GrRenderable) const override;
+
+    GrPixelConfig onGetConfigFromBackendFormat(const GrBackendFormat&, GrColorType) const override;
+    bool onAreColorTypeAndFormatCompatible(GrColorType, const GrBackendFormat&) const override;
+
+    SupportedRead onSupportedReadPixelsColorType(GrColorType, const GrBackendFormat&,
+                                                 GrColorType) const override;
+
+    // ColorTypeInfo for a specific format
+    struct ColorTypeInfo {
+        GrColorType fColorType = GrColorType::kUnknown;
+        enum {
+            kUploadData_Flag = 0x1,
+            // Does Ganesh itself support rendering to this colorType & format pair. Renderability
+            // still additionally depends on if the format itself is renderable.
+            kRenderable_Flag = 0x2,
+            // Indicates that this colorType is supported only if we are wrapping a texture with
+            // the given format and colorType. We do not allow creation with this pair.
+            kWrappedOnly_Flag = 0x4,
+        };
+        uint32_t fFlags = 0;
+
+        GrSwizzle fTextureSwizzle;
+        GrSwizzle fOutputSwizzle;
+    };
 
     struct FormatInfo {
-        FormatInfo() : fOptimalFlags(0), fLinearFlags(0) {}
+        uint32_t colorTypeFlags(GrColorType colorType) const {
+            for (int i = 0; i < fColorTypeInfoCount; ++i) {
+                if (fColorTypeInfos[i].fColorType == colorType) {
+                    return fColorTypeInfos[i].fFlags;
+                }
+            }
+            return 0;
+        }
 
         void init(const GrVkInterface*, VkPhysicalDevice, const VkPhysicalDeviceProperties&,
                   VkFormat);
-        static void InitConfigFlags(VkFormatFeatureFlags, uint16_t* flags);
+        static void InitFormatFlags(VkFormatFeatureFlags, uint16_t* flags);
         void initSampleCounts(const GrVkInterface*, VkPhysicalDevice,
                               const VkPhysicalDeviceProperties&, VkFormat);
 
         enum {
-            kTextureable_Flag = 0x1,
-            kRenderable_Flag  = 0x2,
-            kBlitSrc_Flag     = 0x4,
-            kBlitDst_Flag     = 0x8,
+            kTexturable_Flag = 0x1,
+            kRenderable_Flag = 0x2,
+            kBlitSrc_Flag    = 0x4,
+            kBlitDst_Flag    = 0x8,
         };
 
-        uint16_t fOptimalFlags;
-        uint16_t fLinearFlags;
+        uint16_t fOptimalFlags = 0;
+        uint16_t fLinearFlags = 0;
 
         SkTDArray<int> fColorSampleCounts;
+
+        std::unique_ptr<ColorTypeInfo[]> fColorTypeInfos;
+        int fColorTypeInfoCount = 0;
     };
-    static const size_t kNumVkFormats = 17;
+    static const size_t kNumVkFormats = 20;
     FormatInfo fFormatTable[kNumVkFormats];
 
+    FormatInfo& getFormatInfo(VkFormat);
     const FormatInfo& getFormatInfo(VkFormat) const;
+
+    VkFormat fColorTypeToFormatTable[kGrColorTypeCnt];
+    void setColorType(GrColorType, std::initializer_list<VkFormat> formats);
 
     StencilFormat fPreferredStencilFormat;
 
@@ -234,7 +279,6 @@ private:
 
     bool fMustDoCopiesFromOrigin = false;
     bool fMustSleepOnTearDown = false;
-    bool fNewCBOnPipelineChange = false;
     bool fShouldAlwaysUseDedicatedImageMemory = false;
 
     bool fAvoidUpdateBuffers = false;
@@ -253,6 +297,8 @@ private:
     bool fSupportsAndroidHWBExternalMemory = false;
 
     bool fSupportsYcbcrConversion = false;
+
+    bool fSupportsProtectedMemory = false;
 
     typedef GrCaps INHERITED;
 };

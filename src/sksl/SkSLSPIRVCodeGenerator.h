@@ -14,6 +14,7 @@
 
 #include "src/sksl/SkSLCodeGenerator.h"
 #include "src/sksl/SkSLMemoryLayout.h"
+#include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLBoolLiteral.h"
 #include "src/sksl/ir/SkSLConstructor.h"
@@ -133,6 +134,7 @@ private:
         kMod_SpecialIntrinsic,
         kDFdy_SpecialIntrinsic,
         kSaturate_SpecialIntrinsic,
+        kSampledImage_SpecialIntrinsic,
         kSubpassLoad_SpecialIntrinsic,
         kTexture_SpecialIntrinsic,
     };

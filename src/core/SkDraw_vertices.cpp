@@ -6,8 +6,8 @@
  */
 
 #include "include/core/SkString.h"
-#include "include/private/SkArenaAlloc.h"
 #include "include/private/SkNx.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkAutoBlitterChoose.h"
 #include "src/core/SkConvertPixels.h"
 #include "src/core/SkCoreBlitters.h"
@@ -278,7 +278,8 @@ void SkDraw::drawVertices(SkVertices::VertexMode vmode, int vertexCount,
             matrix43 = triShader->getMatrix43();
             if (shader) {
                 shader = outerAlloc.make<SkShader_Blend>(bmode,
-                                                         sk_ref_sp(triShader), sk_ref_sp(shader));
+                                                         sk_ref_sp(triShader), sk_ref_sp(shader),
+                                                         nullptr);
             } else {
                 shader = triShader;
             }

@@ -8,6 +8,7 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkTypeface.h"
+#include "include/private/SkTemplates.h"
 #include "include/private/SkTo.h"
 #include "src/core/SkDraw.h"
 #include "src/core/SkFontPriv.h"
@@ -15,6 +16,7 @@
 #include "src/core/SkScalerContext.h"
 #include "src/core/SkStrike.h"
 #include "src/core/SkStrikeCache.h"
+#include "src/core/SkStrikeSpec.h"
 #include "src/core/SkTLazy.h"
 #include "src/core/SkUtils.h"
 #include "src/utils/SkUTF.h"
@@ -138,31 +140,6 @@ bool SkFont::hasSomeAntiAliasing() const {
         || edging == SkFont::Edging::kSubpixelAntiAlias;
 }
 
-class SkCanonicalizeFont {
-public:
-    SkCanonicalizeFont(const SkFont& font, const SkPaint* paint) : fFont(&font) {
-        if (paint) {
-            fPaint = *paint;
-        }
-        if (SkDraw::ShouldDrawTextAsPaths(font, fPaint, SkMatrix::I())) {
-            SkFont* f = fLazyFont.set(font);
-            fScale = f->setupForAsPaths(nullptr);
-            fFont = f;
-            fPaint.reset();
-        }
-    }
-
-    const SkFont& getFont() const { return *fFont; }
-    const SkPaint& getPaint() const { return fPaint; }
-    SkScalar getScale() const { return fScale; }
-
-private:
-    const SkFont*    fFont;
-    SkTLazy<SkFont>  fLazyFont;
-    SkPaint          fPaint;
-    SkScalar         fScale = 0;
-};
-
 SkGlyphID SkFont::unicharToGlyph(SkUnichar uni) const {
     return this->getTypefaceOrDefault()->unicharToGlyph(uni);
 }
@@ -232,71 +209,41 @@ int SkFont::textToGlyphs(const void* text, size_t byteLength, SkTextEncoding enc
     return count;
 }
 
-void SkFont::glyphsToUnichars(const SkGlyphID glyphs[], int count, SkUnichar text[]) const {
-    if (count <= 0) {
-        return;
-    }
-
-    auto typeface = this->getTypefaceOrDefault();
-    const unsigned numGlyphsInTypeface = typeface->countGlyphs();
-    SkAutoTArray<SkUnichar> unichars(numGlyphsInTypeface);
-    typeface->getGlyphToUnicodeMap(unichars.get());
-
-    for (int i = 0; i < count; ++i) {
-        unsigned id = glyphs[i];
-        text[i] = (id < numGlyphsInTypeface) ? unichars[id] : 0xFFFD;
-    }
-}
-
-static void set_bounds(const SkGlyph& g, SkRect* bounds) {
-    bounds->set(SkIntToScalar(g.fLeft),
-                SkIntToScalar(g.fTop),
-                SkIntToScalar(g.fLeft + g.fWidth),
-                SkIntToScalar(g.fTop + g.fHeight));
-}
-
-static void join_bounds_x(const SkGlyph& g, SkRect* bounds, SkScalar dx) {
-    bounds->join(SkIntToScalar(g.fLeft) + dx,
-                 SkIntToScalar(g.fTop),
-                 SkIntToScalar(g.fLeft + g.fWidth) + dx,
-                 SkIntToScalar(g.fTop + g.fHeight));
-}
-
 SkScalar SkFont::measureText(const void* text, size_t length, SkTextEncoding encoding,
                              SkRect* bounds, const SkPaint* paint) const {
-    SkCanonicalizeFont canon(*this, paint);
-    const SkFont& font = canon.getFont();
-    const SkScalar scale = canon.getScale();
 
-    SkAutoToGlyphs atg(font, text, length, encoding);
-    const int count = atg.count();
-    if (count == 0) {
+    SkAutoToGlyphs atg(*this, text, length, encoding);
+    const int glyphCount = atg.count();
+    if (glyphCount == 0) {
         if (bounds) {
             bounds->setEmpty();
         }
         return 0;
     }
-    const SkGlyphID* glyphs = atg.glyphs();
+    const SkGlyphID* glyphIDs = atg.glyphs();
 
-    auto cache = SkStrikeCache::FindOrCreateStrikeWithNoDeviceExclusive(font, canon.getPaint());
+    SkStrikeSpec strikeSpec = SkStrikeSpec::MakeCanonicalized(*this, paint);
+    SkBulkGlyphMetrics metrics{strikeSpec};
+    SkSpan<const SkGlyph*> glyphs = metrics.glyphs(SkMakeSpan(glyphIDs, glyphCount));
 
     SkScalar width = 0;
     if (bounds) {
-        const SkGlyph* g = &cache->getGlyphIDMetrics(glyphs[0]);
-        set_bounds(*g, bounds);
-        width = g->fAdvanceX;
-        for (int i = 1; i < count; ++i) {
-            g = &cache->getGlyphIDMetrics(glyphs[i]);
-            join_bounds_x(*g, bounds, width);
-            width += g->fAdvanceX;
+        *bounds = glyphs[0]->rect();
+        width = glyphs[0]->advanceX();
+        for (int i = 1; i < glyphCount; ++i) {
+            SkRect r = glyphs[i]->rect();
+            r.offset(width, 0);
+            bounds->join(r);
+            width += glyphs[i]->advanceX();
         }
     } else {
-        for (int i = 0; i < count; ++i) {
-            width += cache->getGlyphIDAdvance(glyphs[i]).fAdvanceX;
+        for (auto glyph : glyphs) {
+            width += glyph->advanceX();
         }
     }
 
-    if (scale) {
+    const SkScalar scale = strikeSpec.strikeToSourceRatio();
+    if (scale != 1) {
         width *= scale;
         if (bounds) {
             bounds->fLeft *= scale;
@@ -309,88 +256,72 @@ SkScalar SkFont::measureText(const void* text, size_t length, SkTextEncoding enc
     return width;
 }
 
-static SkRect make_bounds(const SkGlyph& g, SkScalar scale) {
-    return {
-        g.fLeft * scale,
-        g.fTop * scale,
-        (g.fLeft + g.fWidth) * scale,
-        (g.fTop + g.fHeight) * scale
-    };
-}
-
-template <typename HANDLER>
-void VisitGlyphs(const SkFont& origFont, const SkPaint* paint, const SkGlyphID glyphs[], int count,
-                 HANDLER handler) {
-    if (count <= 0) {
-        return;
-    }
-
-    SkCanonicalizeFont canon(origFont, paint);
-    const SkFont& font = canon.getFont();
-    SkScalar scale = canon.getScale();
-    if (!scale) {
-        scale = 1;
-    }
-
-    auto cache = SkStrikeCache::FindOrCreateStrikeWithNoDeviceExclusive(font, canon.getPaint());
-    handler(cache.get(), glyphs, count, scale);
-}
-
-void SkFont::getWidthsBounds(const SkGlyphID glyphs[], int count, SkScalar widths[], SkRect bounds[],
+void SkFont::getWidthsBounds(const SkGlyphID glyphIDs[],
+                             int count,
+                             SkScalar widths[],
+                             SkRect bounds[],
                              const SkPaint* paint) const {
-    VisitGlyphs(*this, paint, glyphs, count, [widths, bounds]
-                (SkStrike* cache, const SkGlyphID glyphs[], int count, SkScalar scale) {
-        for (int i = 0; i < count; ++i) {
-            const SkGlyph* g;
-            if (bounds) {
-                g = &cache->getGlyphIDMetrics(glyphs[i]);
-                bounds[i] = make_bounds(*g, scale);
-            } else {
-                g = &cache->getGlyphIDAdvance(glyphs[i]);
-            }
-            if (widths) {
-                widths[i] = g->fAdvanceX * scale;
-            }
+    SkStrikeSpec strikeSpec = SkStrikeSpec::MakeCanonicalized(*this, paint);
+    SkBulkGlyphMetrics metrics{strikeSpec};
+    SkSpan<const SkGlyph*> glyphs = metrics.glyphs(SkMakeSpan(glyphIDs, count));
+
+    SkScalar scale = strikeSpec.strikeToSourceRatio();
+
+    if (bounds) {
+        SkMatrix scaleMat = SkMatrix::MakeScale(scale);
+        SkRect* cursor = bounds;
+        for (auto glyph : glyphs) {
+            scaleMat.mapRectScaleTranslate(cursor++, glyph->rect());
         }
-    });
+    }
+
+    if (widths) {
+        SkScalar* cursor = widths;
+        for (auto glyph : glyphs) {
+            *cursor++ = glyph->advanceX() * scale;
+        }
+    }
 }
 
-void SkFont::getPos(const SkGlyphID glyphs[], int count, SkPoint pos[], SkPoint origin) const {
-    VisitGlyphs(*this, nullptr, glyphs, count, [pos, origin]
-                      (SkStrike* cache, const SkGlyphID glyphs[], int count, SkScalar scale) {
-        SkPoint loc = origin;
-        for (int i = 0; i < count; ++i) {
-            pos[i] = loc;
-            loc.fX += cache->getGlyphIDAdvance(glyphs[i]).fAdvanceX * scale;
-        }
-    });
+void SkFont::getPos(const SkGlyphID glyphIDs[], int count, SkPoint pos[], SkPoint origin) const {
+    SkStrikeSpec strikeSpec = SkStrikeSpec::MakeCanonicalized(*this);
+    SkBulkGlyphMetrics metrics{strikeSpec};
+    SkSpan<const SkGlyph*> glyphs = metrics.glyphs(SkMakeSpan(glyphIDs, count));
+
+    SkPoint sum = origin;
+    for (auto glyph : glyphs) {
+        *pos++ = sum;
+        sum += glyph->advanceVector() * strikeSpec.strikeToSourceRatio();
+    }
 }
 
-void SkFont::getXPos(const SkGlyphID glyphs[], int count, SkScalar xpos[], SkScalar origin) const {
-    VisitGlyphs(*this, nullptr, glyphs, count, [xpos, origin]
-                      (SkStrike* cache, const SkGlyphID glyphs[], int count, SkScalar scale) {
-        SkScalar x = origin;
-        for (int i = 0; i < count; ++i) {
-            xpos[i] = x;
-            x += cache->getGlyphIDAdvance(glyphs[i]).fAdvanceX * scale;
-        }
-    });
+void SkFont::getXPos(
+        const SkGlyphID glyphIDs[], int count, SkScalar xpos[], SkScalar origin) const {
+
+    SkStrikeSpec strikeSpec = SkStrikeSpec::MakeCanonicalized(*this);
+    SkBulkGlyphMetrics metrics{strikeSpec};
+    SkSpan<const SkGlyph*> glyphs = metrics.glyphs(SkMakeSpan(glyphIDs, count));
+
+    SkScalar loc = origin;
+    SkScalar* cursor = xpos;
+    for (auto glyph : glyphs) {
+        *cursor++ = loc;
+        loc += glyph->advanceX() * strikeSpec.strikeToSourceRatio();
+    }
 }
 
-void SkFont::getPaths(const SkGlyphID glyphs[], int count,
+void SkFont::getPaths(const SkGlyphID glyphIDs[], int count,
                       void (*proc)(const SkPath*, const SkMatrix&, void*), void* ctx) const {
     SkFont font(*this);
     SkScalar scale = font.setupForAsPaths(nullptr);
-    if (!scale) {
-        scale = 1;
-    }
-    const SkMatrix mx = SkMatrix::MakeScale(scale, scale);
+    const SkMatrix mx = SkMatrix::MakeScale(scale);
 
-    auto exclusive = SkStrikeCache::FindOrCreateStrikeWithNoDeviceExclusive(font);
-    auto cache = exclusive.get();
+    SkStrikeSpec strikeSpec = SkStrikeSpec::MakeWithNoDevice(font);
+    SkBulkGlyphMetricsAndPaths paths{strikeSpec};
+    SkSpan<const SkGlyph*> glyphs = paths.glyphs(SkMakeSpan(glyphIDs, count));
 
-    for (int i = 0; i < count; ++i) {
-        proc(cache->findPath(cache->getGlyphIDMetrics(glyphs[i])), mx, ctx);
+    for (auto glyph : glyphs) {
+        proc(glyph->path(), mx, ctx);
     }
 }
 
@@ -411,20 +342,19 @@ bool SkFont::getPath(SkGlyphID glyphID, SkPath* path) const {
 }
 
 SkScalar SkFont::getMetrics(SkFontMetrics* metrics) const {
-    SkCanonicalizeFont canon(*this, nullptr);
-    const SkFont& font = canon.getFont();
-    SkScalar scale = canon.getScale();
+
+    SkStrikeSpec strikeSpec = SkStrikeSpec::MakeCanonicalized(*this, nullptr);
 
     SkFontMetrics storage;
     if (nullptr == metrics) {
         metrics = &storage;
     }
 
-    auto cache = SkStrikeCache::FindOrCreateStrikeWithNoDeviceExclusive(font);
+    auto cache = strikeSpec.findOrCreateExclusiveStrike();
     *metrics = cache->getFontMetrics();
 
-    if (scale) {
-        SkFontPriv::ScaleFontMetrics(metrics, scale);
+    if (strikeSpec.strikeToSourceRatio() != 1) {
+        SkFontPriv::ScaleFontMetrics(metrics, strikeSpec.strikeToSourceRatio());
     }
     return metrics->fDescent - metrics->fAscent + metrics->fLeading;
 }
@@ -485,8 +415,20 @@ int SkFontPriv::CountTextElements(const void* text, size_t byteLength, SkTextEnc
 }
 
 void SkFontPriv::GlyphsToUnichars(const SkFont& font, const SkGlyphID glyphs[], int count,
-                                  SkUnichar uni[]) {
-    font.glyphsToUnichars(glyphs, count, uni);
+                                  SkUnichar text[]) {
+    if (count <= 0) {
+        return;
+    }
+
+    auto typeface = font.getTypefaceOrDefault();
+    const unsigned numGlyphsInTypeface = typeface->countGlyphs();
+    SkAutoTArray<SkUnichar> unichars(numGlyphsInTypeface);
+    typeface->getGlyphToUnicodeMap(unichars.get());
+
+    for (int i = 0; i < count; ++i) {
+        unsigned id = glyphs[i];
+        text[i] = (id < numGlyphsInTypeface) ? unichars[id] : 0xFFFD;
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

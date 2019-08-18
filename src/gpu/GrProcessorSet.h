@@ -137,9 +137,10 @@ public:
      * that owns a processor set is recorded to ensure pending and writes are propagated to
      * resources referred to by the processors. Otherwise, data hazards may occur.
      */
-    Analysis finalize(const GrProcessorAnalysisColor&, const GrProcessorAnalysisCoverage,
-                      const GrAppliedClip*, const GrUserStencilSettings*, GrFSAAType, const GrCaps&,
-                      GrClampType, SkPMColor4f* inputColorOverride);
+    Analysis finalize(
+            const GrProcessorAnalysisColor&, const GrProcessorAnalysisCoverage,
+            const GrAppliedClip*, const GrUserStencilSettings*, bool hasMixedSampledCoverage,
+            const GrCaps&, GrClampType, SkPMColor4f* inputColorOverride);
 
     bool isFinalized() const { return SkToBool(kFinalized_Flag & fFlags); }
 
@@ -152,11 +153,12 @@ public:
     SkString dumpProcessors() const;
 #endif
 
-    void visitProxies(const std::function<void(GrSurfaceProxy*)>& func) const {
+    void visitProxies(const GrOp::VisitProxyFunc& func) const {
         for (int i = 0; i < this->numFragmentProcessors(); ++i) {
             GrFragmentProcessor::TextureAccessIter iter(this->fragmentProcessor(i));
             while (const GrFragmentProcessor::TextureSampler* sampler = iter.next()) {
-                func(sampler->proxy());
+                bool mipped = (GrSamplerState::Filter::kMipMap == sampler->samplerState().filter());
+                func(sampler->proxy(), GrMipMapped(mipped));
             }
         }
     }

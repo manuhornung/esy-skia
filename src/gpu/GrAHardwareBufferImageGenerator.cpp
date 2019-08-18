@@ -21,7 +21,6 @@
 #include "include/gpu/GrTexture.h"
 #include "include/gpu/gl/GrGLTypes.h"
 #include "include/private/GrRecordingContext.h"
-#include "include/private/GrTextureProxy.h"
 #include "src/core/SkExchange.h"
 #include "src/core/SkMessageBus.h"
 #include "src/gpu/GrAHardwareBufferUtils.h"
@@ -31,6 +30,7 @@
 #include "src/gpu/GrResourceCache.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrResourceProviderPriv.h"
+#include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/gl/GrGLDefines.h"
 
 #include <EGL/egl.h>
@@ -95,8 +95,9 @@ sk_sp<GrTextureProxy> GrAHardwareBufferImageGenerator::makeProxy(GrRecordingCont
                                                                              fBufferFormat,
                                                                              false);
 
-    GrPixelConfig pixelConfig = context->priv().caps()->getConfigFromBackendFormat(
-            backendFormat, this->getInfo().colorType());
+    GrColorType grColorType = SkColorTypeToGrColorType(this->getInfo().colorType());
+    GrPixelConfig pixelConfig = context->priv().caps()->getConfigFromBackendFormat(backendFormat,
+                                                                                   grColorType);
 
     if (pixelConfig == kUnknown_GrPixelConfig) {
         return nullptr;
@@ -114,9 +115,9 @@ sk_sp<GrTextureProxy> GrAHardwareBufferImageGenerator::makeProxy(GrRecordingCont
     if (context->backend() == GrBackendApi::kOpenGL) {
         textureType = GrTextureType::kExternal;
     } else if (context->backend() == GrBackendApi::kVulkan) {
-        const VkFormat* format = backendFormat.getVkFormat();
-        SkASSERT(format);
-        if (*format == VK_FORMAT_UNDEFINED) {
+        VkFormat format;
+        SkAssertResult(backendFormat.asVkFormat(&format));
+        if (format == VK_FORMAT_UNDEFINED) {
             textureType = GrTextureType::kExternal;
         }
     }
@@ -149,44 +150,47 @@ sk_sp<GrTextureProxy> GrAHardwareBufferImageGenerator::makeProxy(GrRecordingCont
     };
 
     sk_sp<GrTextureProxy> texProxy = proxyProvider->createLazyProxy(
-            [direct, buffer = AutoAHBRelease(hardwareBuffer), width, height, pixelConfig,
-             isProtectedContent, backendFormat](GrResourceProvider* resourceProvider)
+            [direct, buffer = AutoAHBRelease(hardwareBuffer), width, height,
+             isProtectedContent, backendFormat, grColorType](GrResourceProvider* resourceProvider)
                     -> GrSurfaceProxy::LazyInstantiationResult {
                 GrAHardwareBufferUtils::DeleteImageProc deleteImageProc = nullptr;
-                GrAHardwareBufferUtils::DeleteImageCtx deleteImageCtx = nullptr;
+                GrAHardwareBufferUtils::UpdateImageProc updateImageProc = nullptr;
+                GrAHardwareBufferUtils::TexImageCtx texImageCtx = nullptr;
 
                 GrBackendTexture backendTex =
                         GrAHardwareBufferUtils::MakeBackendTexture(direct, buffer.get(),
                                                                    width, height,
                                                                    &deleteImageProc,
-                                                                   &deleteImageCtx,
+                                                                   &updateImageProc,
+                                                                   &texImageCtx,
                                                                    isProtectedContent,
                                                                    backendFormat,
                                                                    false);
                 if (!backendTex.isValid()) {
                     return {};
                 }
-                SkASSERT(deleteImageProc && deleteImageCtx);
+                SkASSERT(deleteImageProc && texImageCtx);
 
-                backendTex.fConfig = pixelConfig;
                 // We make this texture cacheable to avoid recreating a GrTexture every time this
                 // is invoked. We know the owning SkIamge will send an invalidation message when the
                 // image is destroyed, so the texture will be removed at that time.
                 sk_sp<GrTexture> tex = resourceProvider->wrapBackendTexture(
-                        backendTex, kBorrow_GrWrapOwnership, GrWrapCacheable::kYes, kRead_GrIOType);
+                        backendTex, grColorType, kBorrow_GrWrapOwnership, GrWrapCacheable::kYes,
+                        kRead_GrIOType);
                 if (!tex) {
-                    deleteImageProc(deleteImageCtx);
+                    deleteImageProc(texImageCtx);
                     return {};
                 }
 
                 if (deleteImageProc) {
-                    tex->setRelease(deleteImageProc, deleteImageCtx);
+                    tex->setRelease(deleteImageProc, texImageCtx);
                 }
 
-                return std::move(tex);
+                return tex;
             },
-            backendFormat, desc, fSurfaceOrigin, GrMipMapped::kNo,
-            GrInternalSurfaceFlags::kReadOnly, SkBackingFit::kExact, SkBudgeted::kNo);
+            backendFormat, desc, GrRenderable::kNo, 1, fSurfaceOrigin, GrMipMapped::kNo,
+            GrMipMapsStatus::kNotAllocated, GrInternalSurfaceFlags::kReadOnly, SkBackingFit::kExact,
+            SkBudgeted::kNo, GrProtected::kNo);
 
     return texProxy;
 }

@@ -126,15 +126,17 @@ GrFillRRectOp::GrFillRRectOp(
     // We will write the color and local rect attribs during finalize().
 }
 
-GrProcessorSet::Analysis GrFillRRectOp::finalize(const GrCaps& caps, const GrAppliedClip* clip,
-                                                 GrFSAAType fsaaType, GrClampType clampType) {
+GrProcessorSet::Analysis GrFillRRectOp::finalize(
+        const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
+        GrClampType clampType) {
     SkASSERT(1 == fInstanceCount);
 
     SkPMColor4f overrideColor;
     const GrProcessorSet::Analysis& analysis = fProcessors.finalize(
 
             fOriginalColor, GrProcessorAnalysisCoverage::kSingleChannel, clip,
-            &GrUserStencilSettings::kUnused, fsaaType, caps, clampType, &overrideColor);
+            &GrUserStencilSettings::kUnused, hasMixedSampledCoverage, caps, clampType,
+            &overrideColor);
 
     // Finish writing the instance attribs.
     SkPMColor4f finalColor = analysis.inputColorIsOverridden() ? overrideColor : fOriginalColor;
@@ -736,27 +738,30 @@ void GrFillRRectOp::onExecute(GrOpFlushState* flushState, const SkRect& chainBou
         return;
     }
 
-    Processor proc(fAAType, fFlags);
-    SkASSERT(proc.instanceStride() == (size_t)fInstanceStride);
+    Processor* proc = flushState->allocator()->make<Processor>(fAAType, fFlags);
+    SkASSERT(proc->instanceStride() == (size_t)fInstanceStride);
 
     GrPipeline::InitArgs initArgs;
     if (GrAAType::kMSAA == fAAType) {
         initArgs.fInputFlags = GrPipeline::InputFlags::kHWAntialias;
     }
     initArgs.fCaps = &flushState->caps();
-    initArgs.fResourceProvider = flushState->resourceProvider();
     initArgs.fDstProxy = flushState->drawOpArgs().fDstProxy;
+    initArgs.fOutputSwizzle = flushState->drawOpArgs().fOutputSwizzle;
     auto clip = flushState->detachAppliedClip();
-    GrPipeline::FixedDynamicState fixedDynamicState(clip.scissorState().rect());
-    GrPipeline pipeline(initArgs, std::move(fProcessors), std::move(clip));
+    GrPipeline::FixedDynamicState* fixedDynamicState =
+        flushState->allocator()->make<GrPipeline::FixedDynamicState>(clip.scissorState().rect());
+    GrPipeline* pipeline = flushState->allocator()->make<GrPipeline>(initArgs,
+                                                                     std::move(fProcessors),
+                                                                     std::move(clip));
 
-    GrMesh mesh(GrPrimitiveType::kTriangles);
-    mesh.setIndexedInstanced(
+    GrMesh* mesh = flushState->allocator()->make<GrMesh>(GrPrimitiveType::kTriangles);
+    mesh->setIndexedInstanced(
             std::move(indexBuffer), indexCount, fInstanceBuffer, fInstanceCount, fBaseInstance,
             GrPrimitiveRestart::kNo);
-    mesh.setVertexData(std::move(vertexBuffer));
+    mesh->setVertexData(std::move(vertexBuffer));
     flushState->rtCommandBuffer()->draw(
-            proc, pipeline, &fixedDynamicState, nullptr, &mesh, 1, this->bounds());
+            *proc, *pipeline, fixedDynamicState, nullptr, mesh, 1, this->bounds());
 }
 
 // Will the given corner look good if we use HW derivatives?
@@ -815,5 +820,4 @@ static bool can_use_hw_derivatives_with_coverage(
         }
     }
     SK_ABORT("Invalid round rect type.");
-    return false;  // Add this return to keep GCC happy.
 }

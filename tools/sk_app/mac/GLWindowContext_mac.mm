@@ -28,7 +28,7 @@ public:
     void onSwapBuffers() override;
 
     sk_sp<const GrGLInterface> onInitializeContext() override;
-    void onDestroyContext() override {}
+    void onDestroyContext() override;
 
     void resize(int w, int h) override;
 
@@ -103,12 +103,13 @@ sk_sp<const GrGLInterface> GLWindowContext_mac::onInitializeContext() {
             return nullptr;
         }
 
-        GLint swapInterval = fDisplayParams.fDisableVsync ? 0 : 1;
-        [fGLContext setValues:&swapInterval forParameter:NSOpenGLCPSwapInterval];
         // TODO: support Retina displays
         [fMainView setWantsBestResolutionOpenGLSurface:NO];
         [fGLContext setView:fMainView];
     }
+
+    GLint swapInterval = fDisplayParams.fDisableVsync ? 0 : 1;
+    [fGLContext setValues:&swapInterval forParameter:NSOpenGLCPSwapInterval];
 
     // make context current
     [fGLContext makeCurrentContext];
@@ -135,6 +136,16 @@ sk_sp<const GrGLInterface> GLWindowContext_mac::onInitializeContext() {
     return GrGLMakeNativeInterface();
 }
 
+void GLWindowContext_mac::onDestroyContext() {
+    // We only need to tear down the GLContext if we've changed the sample count.
+    if (fGLContext && fSampleCount != fDisplayParams.fMSAASampleCount) {
+        [fPixelFormat release];
+        fPixelFormat = nil;
+        [fGLContext release];
+        fGLContext = nil;
+    }
+}
+
 void GLWindowContext_mac::onSwapBuffers() {
     [fGLContext flushBuffer];
 }
@@ -150,10 +161,10 @@ void GLWindowContext_mac::resize(int w, int h) {
 namespace sk_app {
 namespace window_context_factory {
 
-WindowContext* NewGLForMac(const MacWindowInfo& info, const DisplayParams& params) {
-    WindowContext* ctx = new GLWindowContext_mac(info, params);
+std::unique_ptr<WindowContext> MakeGLForMac(const MacWindowInfo& info,
+                                            const DisplayParams& params) {
+    std::unique_ptr<WindowContext> ctx(new GLWindowContext_mac(info, params));
     if (!ctx->isValid()) {
-        delete ctx;
         return nullptr;
     }
     return ctx;

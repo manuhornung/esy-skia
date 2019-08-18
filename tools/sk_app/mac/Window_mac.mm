@@ -6,6 +6,7 @@
 */
 
 #include "src/core/SkUtils.h"
+#include "tools/ModifierKey.h"
 #include "tools/sk_app/mac/WindowContextFactory_mac.h"
 #include "tools/sk_app/mac/Window_mac.h"
 
@@ -40,10 +41,6 @@ Window* Window::CreateNativeWindow(void*) {
 }
 
 bool Window_mac::initWindow() {
-    if (fRequestedDisplayParams.fMSAASampleCount != fMSAASampleCount) {
-        this->closeWindow();
-    }
-
     // we already have a window
     if (fWindow) {
         return true;
@@ -123,21 +120,26 @@ bool Window_mac::attach(BackendType attachType) {
     info.fMainView = [fWindow contentView];
     switch (attachType) {
         case kRaster_BackendType:
-            fWindowContext = NewRasterForMac(info, fRequestedDisplayParams);
+            fWindowContext = MakeRasterForMac(info, fRequestedDisplayParams);
             break;
+#ifdef SK_DAWN
+        case kDawn_BackendType:
+            fWindowContext = MakeDawnMTLForMac(info, fRequestedDisplayParams);
+            break;
+#endif
 #ifdef SK_VULKAN
         case kVulkan_BackendType:
-            fWindowContext = NewVulkanForMac(info, fRequestedDisplayParams);
+            fWindowContext = MakeVulkanForMac(info, fRequestedDisplayParams);
             break;
 #endif
 #ifdef SK_METAL
         case kMetal_BackendType:
-            fWindowContext = NewMetalForMac(info, fRequestedDisplayParams);
+            fWindowContext = MakeMetalForMac(info, fRequestedDisplayParams);
             break;
 #endif
         case kNativeGL_BackendType:
         default:
-            fWindowContext = NewGLForMac(info, fRequestedDisplayParams);
+            fWindowContext = MakeGLForMac(info, fRequestedDisplayParams);
             break;
     }
     this->onBackendCreated();
@@ -173,6 +175,7 @@ void Window_mac::PaintWindows() {
     const NSRect mainRect = [fWindow->window().contentView bounds];
 
     fWindow->onResize(mainRect.size.width, mainRect.size.height);
+    fWindow->inval();
 }
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
@@ -227,23 +230,26 @@ static Window::Key get_key(unsigned short vk) {
     return Window::Key::kNONE;
 }
 
-static uint32_t get_modifiers(const NSEvent* event) {
+static ModifierKey get_modifiers(const NSEvent* event) {
     NSUInteger modifierFlags = [event modifierFlags];
-    auto modifiers = 0;
+    ModifierKey modifiers = ModifierKey::kNone;
 
+    if (modifierFlags & NSEventModifierFlagCommand) {
+        modifiers |= ModifierKey::kCommand;
+    }
     if (modifierFlags & NSEventModifierFlagShift) {
-        modifiers |= Window::kShift_ModifierKey;
+        modifiers |= ModifierKey::kShift;
     }
     if (modifierFlags & NSEventModifierFlagControl) {
-        modifiers |= Window::kControl_ModifierKey;
+        modifiers |= ModifierKey::kControl;
     }
     if (modifierFlags & NSEventModifierFlagOption) {
-        modifiers |= Window::kOption_ModifierKey;
+        modifiers |= ModifierKey::kOption;
     }
 
     if ((NSKeyDown == [event type] || NSKeyUp == [event type]) &&
         NO == [event isARepeat]) {
-        modifiers |= Window::kFirstPress_ModifierKey;
+        modifiers |= ModifierKey::kFirstPress;
     }
 
     return modifiers;
@@ -309,7 +315,7 @@ static uint32_t get_modifiers(const NSEvent* event) {
 - (void)keyDown:(NSEvent *)event {
     Window::Key key = get_key([event keyCode]);
     if (key != Window::Key::kNONE) {
-        if (!fWindow->onKey(key, Window::kDown_InputState, get_modifiers(event))) {
+        if (!fWindow->onKey(key, InputState::kDown, get_modifiers(event))) {
             if (Window::Key::kEscape == key) {
                 [NSApp terminate:fWindow->window()];
             }
@@ -331,21 +337,21 @@ static uint32_t get_modifiers(const NSEvent* event) {
 - (void)keyUp:(NSEvent *)event {
     Window::Key key = get_key([event keyCode]);
     if (key != Window::Key::kNONE) {
-        (void) fWindow->onKey(key, Window::kUp_InputState, get_modifiers(event));
+        (void) fWindow->onKey(key, InputState::kUp, get_modifiers(event));
     }
 }
 
 - (void)mouseDown:(NSEvent *)event {
     const NSPoint pos = [event locationInWindow];
     const NSRect rect = [fWindow->window().contentView frame];
-    fWindow->onMouse(pos.x, rect.size.height - pos.y, Window::kDown_InputState,
+    fWindow->onMouse(pos.x, rect.size.height - pos.y, InputState::kDown,
                     get_modifiers(event));
 }
 
 - (void)mouseUp:(NSEvent *)event {
     const NSPoint pos = [event locationInWindow];
     const NSRect rect = [fWindow->window().contentView frame];
-    fWindow->onMouse(pos.x, rect.size.height - pos.y, Window::kUp_InputState,
+    fWindow->onMouse(pos.x, rect.size.height - pos.y, InputState::kUp,
                      get_modifiers(event));
 }
 
@@ -356,7 +362,7 @@ static uint32_t get_modifiers(const NSEvent* event) {
 - (void)mouseMoved:(NSEvent *)event {
     const NSPoint pos = [event locationInWindow];
     const NSRect rect = [fWindow->window().contentView frame];
-    fWindow->onMouse(pos.x, rect.size.height - pos.y, Window::kMove_InputState,
+    fWindow->onMouse(pos.x, rect.size.height - pos.y, InputState::kMove,
                      get_modifiers(event));
 }
 
@@ -366,7 +372,7 @@ static uint32_t get_modifiers(const NSEvent* event) {
 }
 
 - (void)drawRect:(NSRect)rect {
-    fWindow->inval();
+    fWindow->onPaint();
 }
 
 @end

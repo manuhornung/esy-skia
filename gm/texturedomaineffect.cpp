@@ -23,9 +23,7 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkGradientShader.h"
 #include "include/gpu/GrContext.h"
-#include "include/gpu/GrSamplerState.h"
 #include "include/gpu/GrTypes.h"
-#include "include/private/GrTextureProxy.h"
 #include "include/private/GrTypesPriv.h"
 #include "include/private/SkTArray.h"
 #include "src/gpu/GrCaps.h"
@@ -35,6 +33,8 @@
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrRenderTargetContextPriv.h"
+#include "src/gpu/GrSamplerState.h"
+#include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/effects/GrPorterDuffXferProcessor.h"
 #include "src/gpu/effects/GrTextureDomain.h"
 #include "src/gpu/ops/GrDrawOp.h"
@@ -152,8 +152,8 @@ protected:
                     const SkMatrix viewMatrix = SkMatrix::MakeTrans(x, y);
                     grPaint.addColorFragmentProcessor(std::move(fp));
                     renderTargetContext->priv().testingOnly_addDrawOp(
-                            GrFillRectOp::Make(context, std::move(grPaint), GrAAType::kNone,
-                                               viewMatrix, renderRect));
+                            GrFillRectOp::MakeNonAARect(context, std::move(grPaint),
+                                                        viewMatrix, renderRect));
                     x += renderRect.width() + kTestPad;
                 }
                 y += renderRect.height() + kTestPad;

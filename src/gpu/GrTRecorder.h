@@ -9,8 +9,8 @@
 #define GrTRecorder_DEFINED
 
 #include "include/gpu/GrTypes.h"
-#include "include/private/SkArenaAlloc.h"
 #include "include/private/SkTLogic.h"
+#include "src/core/SkArenaAlloc.h"
 
 /**
  * Records a list of items with a common base type, optional associated data, and
@@ -70,7 +70,7 @@ public:
      * between reinterpret_cast<TBase*> and static_cast<TBase*> when operating on TItem*.
      * Multiple inheritance may make this not true. It is runtime asserted.
      */
-    template <typename TItem, typename... Args> TItem& emplace(Args... args) {
+    template <typename TItem, typename... Args> TItem& emplace(Args&&... args) {
         return this->emplaceWithData<TItem, Args...>(0, std::forward<Args>(args)...);
     }
 

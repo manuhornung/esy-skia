@@ -7,9 +7,9 @@
 
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkString.h"
-#include "include/private/SkArenaAlloc.h"
 #include "include/private/SkColorData.h"
 #include "include/utils/SkRandom.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkBlendModePriv.h"
 #include "src/core/SkBlitRow.h"
 #include "src/core/SkColorSpacePriv.h"
@@ -73,7 +73,7 @@ bool SkModeColorFilter::onAppendStages(const SkStageRec& rec, bool shaderIsOpaqu
 
 ///////////////////////////////////////////////////////////////////////////////
 #if SK_SUPPORT_GPU
-#include "include/gpu/GrBlend.h"
+#include "src/gpu/GrBlend.h"
 #include "src/gpu/SkGr.h"
 #include "src/gpu/effects/GrXfermodeFragmentProcessor.h"
 #include "src/gpu/effects/generated/GrConstColorProcessor.h"

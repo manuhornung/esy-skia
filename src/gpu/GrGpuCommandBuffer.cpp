@@ -9,13 +9,13 @@
 
 #include "include/core/SkRect.h"
 #include "include/gpu/GrContext.h"
-#include "include/gpu/GrRenderTarget.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrFixedClip.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrMesh.h"
 #include "src/gpu/GrPrimitiveProcessor.h"
+#include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrRenderTargetPriv.h"
 
 void GrGpuRTCommandBuffer::clear(const GrFixedClip& clip, const SkPMColor4f& color) {
@@ -49,9 +49,8 @@ bool GrGpuRTCommandBuffer::draw(const GrPrimitiveProcessor& primProc, const GrPi
     SkASSERT(!pipeline.isScissorEnabled() || fixedDynamicState ||
              (dynamicStateArrays && dynamicStateArrays->fScissorRects));
 
-    if (pipeline.isBad()) {
-        return false;
-    }
+    SkASSERT(!pipeline.isBad());
+
 #ifdef SK_DEBUG
     if (fixedDynamicState && fixedDynamicState->fPrimitiveProcessorTextures) {
         GrTextureProxy** processorProxies = fixedDynamicState->fPrimitiveProcessorTextures;

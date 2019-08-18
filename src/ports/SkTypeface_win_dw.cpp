@@ -15,6 +15,7 @@
 // not use GDI, undefing GetGlyphIndices makes things less confusing.
 #undef GetGlyphIndices
 
+#include "include/core/SkData.h"
 #include "include/private/SkTo.h"
 #include "src/core/SkFontDescriptor.h"
 #include "src/core/SkFontStream.h"
@@ -138,29 +139,30 @@ int DWriteFontTypeface::onGetVariationDesignPosition(
     UINT32 fontAxisCount = fontFace5->GetFontAxisValueCount();
     SkTScopedComPtr<IDWriteFontResource> fontResource;
     HR_GENERAL(fontFace5->GetFontResource(&fontResource), nullptr, -1);
-    int variableAxisCount = 0;
+    UINT32 variableAxisCount = 0;
     for (UINT32 i = 0; i < fontAxisCount; ++i) {
         if (fontResource->GetFontAxisAttributes(i) & DWRITE_FONT_AXIS_ATTRIBUTES_VARIABLE) {
-            variableAxisCount++;
+            ++variableAxisCount;
         }
     }
 
-    if (!coordinates || coordinateCount < variableAxisCount) {
-        return variableAxisCount;
+    if (!coordinates || coordinateCount < 0 || (unsigned)coordinateCount < variableAxisCount) {
+        return SkTo<int>(variableAxisCount);
     }
 
     SkAutoSTMalloc<8, DWRITE_FONT_AXIS_VALUE> fontAxisValue(fontAxisCount);
     HR_GENERAL(fontFace5->GetFontAxisValues(fontAxisValue.get(), fontAxisCount), nullptr, -1);
     UINT32 coordIndex = 0;
-
     for (UINT32 axisIndex = 0; axisIndex < fontAxisCount; ++axisIndex) {
         if (fontResource->GetFontAxisAttributes(axisIndex) & DWRITE_FONT_AXIS_ATTRIBUTES_VARIABLE) {
             coordinates[coordIndex].axis = SkEndian_SwapBE32(fontAxisValue[axisIndex].axisTag);
             coordinates[coordIndex].value = fontAxisValue[axisIndex].value;
+            ++coordIndex;
         }
     }
 
-    return variableAxisCount;
+    SkASSERT(coordIndex == variableAxisCount);
+    return SkTo<int>(variableAxisCount);
 
 #endif
 
@@ -253,6 +255,14 @@ size_t DWriteFontTypeface::onGetTableData(SkFontTableTag tag, size_t offset,
     }
 
     return size;
+}
+
+sk_sp<SkData> DWriteFontTypeface::onCopyTableData(SkFontTableTag tag) const {
+    AutoDWriteTable table(fDWriteFontFace.get(), SkEndian_SwapBE32(tag));
+    if (!table.fExists) {
+        return nullptr;
+    }
+    return SkData::MakeWithCopy(table.fData, table.fSize);
 }
 
 sk_sp<SkTypeface> DWriteFontTypeface::onMakeClone(const SkFontArguments& args) const {

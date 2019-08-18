@@ -74,9 +74,13 @@ static inline VkFormat attrib_type_to_vkformat(GrVertexAttribType type) {
             return VK_FORMAT_R32_SINT;
         case kUint_GrVertexAttribType:
             return VK_FORMAT_R32_UINT;
+        case kUShort_norm_GrVertexAttribType:
+            return VK_FORMAT_R16_UNORM;
+        // Experimental (for Y416)
+        case kUShort4_norm_GrVertexAttribType:
+            return VK_FORMAT_R16G16B16A16_UNORM;
     }
     SK_ABORT("Unknown vertex attrib type");
-    return VK_FORMAT_UNDEFINED;
 }
 
 static void setup_vertex_input_state(const GrPrimitiveProcessor& primProc,
@@ -161,7 +165,6 @@ static VkPrimitiveTopology gr_primitive_type_to_vk_topology(GrPrimitiveType prim
             return VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY;
     }
     SK_ABORT("invalid GrPrimitiveType");
-    return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }
 
 static void setup_input_assembly_state(GrPrimitiveType primitiveType,
@@ -426,8 +429,7 @@ static bool blend_coeff_refs_constant(GrBlendCoeff coeff) {
 static void setup_color_blend_state(const GrPipeline& pipeline,
                                     VkPipelineColorBlendStateCreateInfo* colorBlendInfo,
                                     VkPipelineColorBlendAttachmentState* attachmentState) {
-    GrXferProcessor::BlendInfo blendInfo;
-    pipeline.getXferProcessor().getBlendInfo(&blendInfo);
+    const GrXferProcessor::BlendInfo& blendInfo = pipeline.getXferProcessor().getBlendInfo();
 
     GrBlendEquation equation = blendInfo.fEquation;
     GrBlendCoeff srcCoeff = blendInfo.fSrcBlend;
@@ -573,11 +575,12 @@ GrVkPipeline* GrVkPipeline::Create(
         return nullptr;
     }
 
-    return new GrVkPipeline(vkPipeline);
+    return new GrVkPipeline(vkPipeline, layout);
 }
 
 void GrVkPipeline::freeGPUData(GrVkGpu* gpu) const {
     GR_VK_CALL(gpu->vkInterface(), DestroyPipeline(gpu->device(), fPipeline, nullptr));
+    GR_VK_CALL(gpu->vkInterface(), DestroyPipelineLayout(gpu->device(), fPipelineLayout, nullptr));
 }
 
 void GrVkPipeline::SetDynamicScissorRectState(GrVkGpu* gpu,
@@ -621,16 +624,14 @@ void GrVkPipeline::SetDynamicViewportState(GrVkGpu* gpu,
 
 void GrVkPipeline::SetDynamicBlendConstantState(GrVkGpu* gpu,
                                                 GrVkCommandBuffer* cmdBuffer,
-                                                GrPixelConfig pixelConfig,
+                                                const GrSwizzle& swizzle,
                                                 const GrXferProcessor& xferProcessor) {
-    GrXferProcessor::BlendInfo blendInfo;
-    xferProcessor.getBlendInfo(&blendInfo);
+    const GrXferProcessor::BlendInfo& blendInfo = xferProcessor.getBlendInfo();
     GrBlendCoeff srcCoeff = blendInfo.fSrcBlend;
     GrBlendCoeff dstCoeff = blendInfo.fDstBlend;
     float floatColors[4];
     if (blend_coeff_refs_constant(srcCoeff) || blend_coeff_refs_constant(dstCoeff)) {
         // Swizzle the blend to match what the shader will output.
-        const GrSwizzle& swizzle = gpu->caps()->shaderCaps()->configOutputSwizzle(pixelConfig);
         SkPMColor4f blendConst = swizzle.applyTo(blendInfo.fBlendConstant);
         floatColors[0] = blendConst.fR;
         floatColors[1] = blendConst.fG;

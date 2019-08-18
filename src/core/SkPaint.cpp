@@ -57,7 +57,7 @@ SkPaint::SkPaint()
 }
 
 SkPaint::SkPaint(const SkColor4f& color, SkColorSpace* colorSpace) : SkPaint() {
-    this->setColor4f(color, colorSpace);
+    this->setColor(color, colorSpace);
 }
 
 SkPaint::SkPaint(const SkPaint& src) = default;
@@ -76,7 +76,6 @@ bool operator==(const SkPaint& a, const SkPaint& b) {
         && EQUAL(fShader)
         && EQUAL(fMaskFilter)
         && EQUAL(fColorFilter)
-        && EQUAL(fDrawLooper)
         && EQUAL(fImageFilter)
         && EQUAL(fColor4f)
         && EQUAL(fWidth)
@@ -88,7 +87,6 @@ bool operator==(const SkPaint& a, const SkPaint& b) {
 
 #define DEFINE_REF_FOO(type)    sk_sp<Sk##type> SkPaint::ref##type() const { return f##type; }
 DEFINE_REF_FOO(ColorFilter)
-DEFINE_REF_FOO(DrawLooper)
 DEFINE_REF_FOO(ImageFilter)
 DEFINE_REF_FOO(MaskFilter)
 DEFINE_REF_FOO(PathEffect)
@@ -115,7 +113,7 @@ void SkPaint::setColor(SkColor color) {
     fColor4f = SkColor4f::FromColor(color);
 }
 
-void SkPaint::setColor4f(const SkColor4f& color, SkColorSpace* colorSpace) {
+void SkPaint::setColor(const SkColor4f& color, SkColorSpace* colorSpace) {
     SkASSERT(fColor4f.fA >= 0 && fColor4f.fA <= 1.0f);
 
     SkColorSpaceXformSteps steps{colorSpace,          kUnpremul_SkAlphaType,
@@ -181,9 +179,7 @@ MOVE_FIELD(Shader)
 MOVE_FIELD(ColorFilter)
 MOVE_FIELD(PathEffect)
 MOVE_FIELD(MaskFilter)
-MOVE_FIELD(DrawLooper)
 #undef MOVE_FIELD
-void SkPaint::setLooper(sk_sp<SkDrawLooper> looper) { fDrawLooper = std::move(looper); }
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -320,7 +316,6 @@ void SkPaintPriv::Flatten(const SkPaint& paint, SkWriteBuffer& buffer) {
         paint.getShader() ||
         paint.getMaskFilter() ||
         paint.getColorFilter() ||
-        paint.getLooper() ||
         paint.getImageFilter()) {
         flatFlags |= kHasEffects_FlatFlag;
     }
@@ -336,7 +331,7 @@ void SkPaintPriv::Flatten(const SkPaint& paint, SkWriteBuffer& buffer) {
         buffer.writeFlattenable(paint.getShader());
         buffer.writeFlattenable(paint.getMaskFilter());
         buffer.writeFlattenable(paint.getColorFilter());
-        buffer.writeFlattenable(paint.getLooper());
+        buffer.write32(0);  // legacy, was drawlooper
         buffer.writeFlattenable(paint.getImageFilter());
     }
 }
@@ -357,12 +352,12 @@ SkReadPaintResult SkPaintPriv::Unflatten_PreV68(SkPaint* paint, SkReadBuffer& bu
 
     paint->setStrokeWidth(buffer.readScalar());
     paint->setStrokeMiter(buffer.readScalar());
-    if (buffer.isVersionLT(SkReadBuffer::kFloat4PaintColor_Version)) {
+    if (buffer.isVersionLT(SkPicturePriv::kFloat4PaintColor_Version)) {
         paint->setColor(buffer.readColor());
     } else {
         SkColor4f color;
         buffer.readColor4f(&color);
-        paint->setColor4f(color, sk_srgb_singleton());
+        paint->setColor(color, sk_srgb_singleton());
     }
 
     unsigned flatFlags = unpack_paint_flags(paint, buffer.readUInt(), font);
@@ -387,14 +382,13 @@ SkReadPaintResult SkPaintPriv::Unflatten_PreV68(SkPaint* paint, SkReadBuffer& bu
         paint->setMaskFilter(buffer.readMaskFilter());
         paint->setColorFilter(buffer.readColorFilter());
         (void)buffer.read32();  // use to be SkRasterizer
-        paint->setLooper(buffer.readDrawLooper());
+        (void)buffer.read32();  // used to be drawlooper
         paint->setImageFilter(buffer.readImageFilter());
     } else {
         paint->setPathEffect(nullptr);
         paint->setShader(nullptr);
         paint->setMaskFilter(nullptr);
         paint->setColorFilter(nullptr);
-        paint->setLooper(nullptr);
         paint->setImageFilter(nullptr);
     }
 
@@ -406,7 +400,7 @@ SkReadPaintResult SkPaintPriv::Unflatten_PreV68(SkPaint* paint, SkReadBuffer& bu
 }
 
 SkReadPaintResult SkPaintPriv::Unflatten(SkPaint* paint, SkReadBuffer& buffer, SkFont* font) {
-    if (buffer.isVersionLT(SkReadBuffer::kPaintDoesntSerializeFonts_Version)) {
+    if (buffer.isVersionLT(SkPicturePriv::kPaintDoesntSerializeFonts_Version)) {
         return Unflatten_PreV68(paint, buffer, font);
     }
 
@@ -417,7 +411,7 @@ SkReadPaintResult SkPaintPriv::Unflatten(SkPaint* paint, SkReadBuffer& buffer, S
     {
         SkColor4f color;
         buffer.readColor4f(&color);
-        paint->setColor4f(color, sk_srgb_singleton());
+        paint->setColor(color, sk_srgb_singleton());
     }
 
     unsigned flatFlags = unpack_v68(paint, buffer.readUInt(), safe);
@@ -427,14 +421,13 @@ SkReadPaintResult SkPaintPriv::Unflatten(SkPaint* paint, SkReadBuffer& buffer, S
         paint->setShader(buffer.readShader());
         paint->setMaskFilter(buffer.readMaskFilter());
         paint->setColorFilter(buffer.readColorFilter());
-        paint->setLooper(buffer.readDrawLooper());
+        (void)buffer.readDrawLooper();
         paint->setImageFilter(buffer.readImageFilter());
     } else {
         paint->setPathEffect(nullptr);
         paint->setShader(nullptr);
         paint->setMaskFilter(nullptr);
         paint->setColorFilter(nullptr);
-        paint->setLooper(nullptr);
         paint->setImageFilter(nullptr);
     }
 
@@ -483,9 +476,6 @@ bool SkPaint::getFillPath(const SkPath& src, SkPath* dst, const SkRect* cullRect
 }
 
 bool SkPaint::canComputeFastBounds() const {
-    if (this->getLooper()) {
-        return this->getLooper()->canComputeFastBounds(*this);
-    }
     if (this->getImageFilter() && !this->getImageFilter()->canComputeFastBounds()) {
         return false;
     }
@@ -498,12 +488,6 @@ const SkRect& SkPaint::doComputeFastBounds(const SkRect& origSrc,
     SkASSERT(storage);
 
     const SkRect* src = &origSrc;
-
-    if (this->getLooper()) {
-        SkASSERT(this->getLooper()->canComputeFastBounds(*this));
-        this->getLooper()->computeFastBounds(*this, *src, storage);
-        return *storage;
-    }
 
     SkRect tmpSrc;
     if (this->getPathEffect()) {
@@ -540,9 +524,6 @@ static bool affects_alpha(const SkImageFilter* imf) {
 }
 
 bool SkPaint::nothingToDraw() const {
-    if (fDrawLooper) {
-        return false;
-    }
     switch (this->getBlendMode()) {
         case SkBlendMode::kSrcOver:
         case SkBlendMode::kSrcATop:
@@ -562,9 +543,9 @@ bool SkPaint::nothingToDraw() const {
 }
 
 uint32_t SkPaint::getHash() const {
-    // We're going to hash 6 pointers and 6 floats, finishing up with fBitfields,
-    // so fBitfields should be 6 pointers and 6 floats from the start.
-    static_assert(offsetof(SkPaint, fBitfieldsUInt) == 6 * sizeof(void*) + 6 * sizeof(float),
+    // We're going to hash 5 pointers and 6 floats, finishing up with fBitfields,
+    // so fBitfields should be 5 pointers and 6 floats from the start.
+    static_assert(offsetof(SkPaint, fBitfieldsUInt) == 5 * sizeof(void*) + 6 * sizeof(float),
                   "SkPaint_notPackedTightly");
     return SkOpts::hash(reinterpret_cast<const uint32_t*>(this),
                         offsetof(SkPaint, fBitfieldsUInt) + sizeof(fBitfieldsUInt));

@@ -33,6 +33,7 @@
 #include "src/core/SkMask.h"
 #include "src/core/SkScalerContext.h"
 #include "src/core/SkStrike.h"
+#include "src/core/SkStrikeSpec.h"
 #include "src/pdf/SkPDFBitmap.h"
 #include "src/pdf/SkPDFDocumentPriv.h"
 #include "src/pdf/SkPDFFont.h"
@@ -47,24 +48,6 @@
 #include <initializer_list>
 #include <memory>
 #include <utility>
-
-SkExclusiveStrikePtr SkPDFFont::MakeVectorCache(SkTypeface* face, int* size) {
-    SkFont font;
-    font.setHinting(SkFontHinting::kNone);
-    font.setEdging(SkFont::Edging::kAlias);
-    font.setTypeface(sk_ref_sp(face));
-    int unitsPerEm = face->getUnitsPerEm();
-    if (unitsPerEm <= 0) {
-        unitsPerEm = 1024;
-    }
-    if (size) {
-        *size = unitsPerEm;
-    }
-    font.setSize((SkScalar)unitsPerEm);
-    const SkSurfaceProps props(0, kUnknown_SkPixelGeometry);
-    return SkStrikeCache::FindOrCreateStrikeExclusive(
-        font, SkPaint(), props, SkScalerContextFlags::kFakeGammaAndBoostContrast, SkMatrix::I());
-}
 
 void SkPDFFont::GetType1GlyphNames(const SkTypeface& face, SkString* dst) {
     face.getPostScriptGlyphNames(dst);
@@ -85,7 +68,6 @@ inline SkScalar from_font_units(SkScalar scaled, uint16_t emSize) {
 inline SkScalar scaleFromFontUnits(int16_t val, uint16_t emSize) {
     return from_font_units(SkIntToScalar(val), emSize);
 }
-
 
 void setGlyphWidthAndBoundingBox(SkScalar width, SkIRect box,
                                  SkDynamicMemoryWStream* content) {
@@ -198,15 +180,9 @@ static SkGlyphID first_nonzero_glyph_for_single_byte_encoding(SkGlyphID gid) {
     return gid != 0 ? gid - (gid - 1) % 255 : 1;
 }
 
-static bool has_outline_glyph(SkGlyphID gid, SkStrike* cache) {
-    const SkGlyph& glyph = cache->getGlyphIDMetrics(gid);
-    return glyph.isEmpty() || cache->findPath(glyph);
-}
-
 SkPDFFont* SkPDFFont::GetFontResource(SkPDFDocument* doc,
-                                      SkStrike* cache,
-                                      SkTypeface* face,
-                                      SkGlyphID glyphID) {
+                                      const SkGlyph* glyph,
+                                      SkTypeface* face) {
     SkASSERT(doc);
     SkASSERT(face);  // All SkPDFDevice::internalDrawText ensures this.
     const SkAdvancedTypefaceMetrics* fontMetrics = SkPDFFont::GetMetrics(face, doc);
@@ -214,11 +190,12 @@ SkPDFFont* SkPDFFont::GetFontResource(SkPDFDocument* doc,
                             // GetMetrics only returns null to signify a bad typeface.
     const SkAdvancedTypefaceMetrics& metrics = *fontMetrics;
     SkAdvancedTypefaceMetrics::FontType type = SkPDFFont::FontType(metrics);
-    if (!has_outline_glyph(glyphID, cache)) {
+    if (!(glyph->isEmpty() || glyph->path())) {
         type = SkAdvancedTypefaceMetrics::kOther_Font;
     }
     bool multibyte = SkPDFFont::IsMultiByte(type);
-    SkGlyphID subsetCode = multibyte ? 0 : first_nonzero_glyph_for_single_byte_encoding(glyphID);
+    SkGlyphID subsetCode =
+            multibyte ? 0 : first_nonzero_glyph_for_single_byte_encoding(glyph->getGlyphID());
     uint64_t fontID = (static_cast<uint64_t>(SkTypeface::UniqueID(face)) << 16) | subsetCode;
 
     if (SkPDFFont* found = doc->fFontMap.find(fontID)) {
@@ -232,7 +209,7 @@ SkPDFFont* SkPDFFont::GetFontResource(SkPDFDocument* doc,
     SkGlyphID lastGlyph = SkToU16(typeface->countGlyphs() - 1);
 
     // should be caught by SkPDFDevice::internalDrawText
-    SkASSERT(glyphID <= lastGlyph);
+    SkASSERT(glyph->getGlyphID() <= lastGlyph);
 
     SkGlyphID firstNonZeroGlyph;
     if (multibyte) {
@@ -389,17 +366,14 @@ static void emit_subset_type0(const SkPDFFont& font, SkPDFDocument* doc) {
     sysInfo->insertInt("Supplement", 0);
     newCIDFont->insertObject("CIDSystemInfo", std::move(sysInfo));
 
-    int16_t defaultWidth = 0;
+    SkScalar defaultWidth = 0;
     {
-        int emSize;
-        auto glyphCache = SkPDFFont::MakeVectorCache(face, &emSize);
         std::unique_ptr<SkPDFArray> widths = SkPDFMakeCIDGlyphWidthsArray(
-                glyphCache.get(), &font.glyphUsage(), SkToS16(emSize), &defaultWidth);
+                *face, &font.glyphUsage(), &defaultWidth);
         if (widths && widths->size() > 0) {
             newCIDFont->insertObject("W", std::move(widths));
         }
-        newCIDFont->insertScalar(
-                "DW", scaleFromFontUnits(defaultWidth, SkToS16(emSize)));
+        newCIDFont->insertScalar("DW", defaultWidth);
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -465,8 +439,8 @@ struct ImageAndOffset {
     SkIPoint fOffset;
 };
 static ImageAndOffset to_image(SkGlyphID gid, SkStrike* cache) {
-    (void)cache->findImage(cache->getGlyphIDMetrics(gid));
-    SkMask mask = cache->getGlyphIDMetrics(gid).mask();
+    (void)cache->prepareImage(cache->glyph(gid));
+    SkMask mask = cache->glyph(gid)->mask();
     if (!mask.fImage) {
         return {nullptr, {0, 0}};
     }
@@ -546,7 +520,8 @@ static void emit_subset_type3(const SkPDFFont& pdfFont, SkPDFDocument* doc) {
         --lastGlyphID;
     }
     int unitsPerEm;
-    auto cache = SkPDFFont::MakeVectorCache(typeface, &unitsPerEm);
+    SkStrikeSpec strikeSpec = SkStrikeSpec::MakePDFVector(*typeface, &unitsPerEm);
+    auto cache = strikeSpec.findOrCreateExclusiveStrike();
     SkASSERT(cache);
     SkScalar emSize = (SkScalar)unitsPerEm;
 
@@ -585,25 +560,23 @@ static void emit_subset_type3(const SkPDFFont& pdfFont, SkPDFDocument* doc) {
             characterName.set("g0");
         } else {
             characterName.printf("g%X", gID);
-            const SkGlyph& glyph = cache->getGlyphIDMetrics(gID);
-            advance = SkFloatToScalar(glyph.fAdvanceX);
-            glyphBBox = SkIRect::MakeXYWH(glyph.fLeft, glyph.fTop,
-                                          glyph.fWidth, glyph.fHeight);
+            SkGlyph* glyph = cache->glyph(gID);
+            advance = glyph->advanceX();
+            glyphBBox = glyph->iRect();
             bbox.join(glyphBBox);
-            const SkPath* path = cache->findPath(glyph);
+            const SkPath* path = cache->preparePath(glyph);
             SkDynamicMemoryWStream content;
             if (path && !path->isEmpty()) {
-                setGlyphWidthAndBoundingBox(SkFloatToScalar(glyph.fAdvanceX), glyphBBox, &content);
+                setGlyphWidthAndBoundingBox(glyph->advanceX(), glyphBBox, &content);
                 SkPDFUtils::EmitPath(*path, SkPaint::kFill_Style, &content);
                 SkPDFUtils::PaintPath(SkPaint::kFill_Style, path->getFillType(), &content);
             } else {
                 auto pimg = to_image(gID, cache.get());
                 if (!pimg.fImage) {
-                    setGlyphWidthAndBoundingBox(SkFloatToScalar(glyph.fAdvanceX), glyphBBox,
-                                                &content);
+                    setGlyphWidthAndBoundingBox(glyph->advanceX(), glyphBBox, &content);
                 } else {
                     imageGlyphs.emplace_back(gID, SkPDFSerializeImage(pimg.fImage.get(), doc));
-                    SkPDFUtils::AppendScalar(SkFloatToScalar(glyph.fAdvanceX), &content);
+                    SkPDFUtils::AppendScalar(glyph->advanceX(), &content);
                     content.writeText(" 0 d0\n");
                     content.writeDecAsText(pimg.fImage->width());
                     content.writeText(" 0 0 ");

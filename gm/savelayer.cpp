@@ -31,8 +31,8 @@
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
-#include "include/effects/SkBlurImageFilter.h"
 #include "include/effects/SkGradientShader.h"
+#include "include/effects/SkImageFilters.h"
 #include "include/effects/SkShaderMaskFilter.h"
 #include "include/utils/SkRandom.h"
 #include "src/core/SkCanvasPriv.h"
@@ -219,7 +219,7 @@ DEF_SIMPLE_GM(savelayer_clipmask, canvas, 1200, 1200) {
     static const PaintMakerFunc kPaintMakers[] = {
         []() -> SkPaint { return SkPaint(); },
         []() -> SkPaint {
-            SkPaint p; p.setImageFilter(SkBlurImageFilter::Make(2, 2, nullptr)); return p;
+            SkPaint p; p.setImageFilter(SkImageFilters::Blur(2, 2, nullptr)); return p;
         },
         []() -> SkPaint { SkPaint p; p.setBlendMode(SkBlendMode::kSrcOut); return p; },
     };
@@ -438,5 +438,34 @@ DEF_SIMPLE_GM(save_behind, canvas, 830, 670) {
 
         canvas->restore();
         canvas->translate(430, 0);
+    }
+}
+
+#include "include/effects/SkGradientShader.h"
+
+DEF_SIMPLE_GM(savelayer_f16, canvas, 900, 300) {
+    int n = 15;
+    SkRect r{0, 0, 300, 300};
+    SkPaint paint;
+
+    const SkColor colors[] = { SK_ColorRED, SK_ColorGREEN, SK_ColorBLUE, SK_ColorRED };
+    paint.setShader(SkGradientShader::MakeSweep(r.centerX(), r.centerY(),
+                                                colors, nullptr, SK_ARRAY_COUNT(colors)));
+
+    canvas->drawOval(r, paint);
+
+    paint.setAlphaf(1.0f/n);
+    paint.setBlendMode(SkBlendMode::kPlus);
+
+    for (auto flags : {0, (int)SkCanvas::kF16ColorType}) {
+        canvas->translate(r.width(), 0);
+
+        SkCanvas::SaveLayerRec rec;
+        rec.fSaveLayerFlags = flags;
+        canvas->saveLayer(rec);
+        for (int i = 0; i < n; ++i) {
+            canvas->drawOval(r, paint);
+        }
+        canvas->restore();
     }
 }

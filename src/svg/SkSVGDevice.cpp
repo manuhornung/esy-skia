@@ -20,6 +20,7 @@
 #include "include/private/SkChecksum.h"
 #include "include/private/SkTHash.h"
 #include "include/private/SkTo.h"
+#include "include/svg/SkSVGCanvas.h"
 #include "include/utils/SkBase64.h"
 #include "include/utils/SkParsePath.h"
 #include "src/codec/SkJpegCodec.h"
@@ -28,6 +29,7 @@
 #include "src/core/SkClipOpPriv.h"
 #include "src/core/SkClipStack.h"
 #include "src/core/SkDraw.h"
+#include "src/core/SkFontPriv.h"
 #include "src/core/SkUtils.h"
 #include "src/shaders/SkShaderBase.h"
 #include "src/xml/SkXMLWriter.h"
@@ -128,6 +130,32 @@ bool RequiresViewportReset(const SkPaint& paint) {
       return true;
   }
   return false;
+}
+
+SkPath GetPath(const SkGlyphRun& glyphRun, const SkPoint& offset) {
+    SkPath path;
+
+    struct Rec {
+        SkPath*        fPath;
+        const SkPoint  fOffset;
+        const SkPoint* fPos;
+    } rec = { &path, offset, glyphRun.positions().data() };
+
+    glyphRun.font().getPaths(glyphRun.glyphsIDs().data(), SkToInt(glyphRun.glyphsIDs().size()),
+            [](const SkPath* path, const SkMatrix& mx, void* ctx) {
+                Rec* rec = reinterpret_cast<Rec*>(ctx);
+                if (path) {
+                    SkMatrix total = mx;
+                    total.postTranslate(rec->fPos->fX + rec->fOffset.fX,
+                                        rec->fPos->fY + rec->fOffset.fY);
+                    rec->fPath->addPath(*path, total);
+                } else {
+                    // TODO: this is going to drop color emojis.
+                }
+                rec->fPos += 1; // move to the next glyph's position
+            }, &rec);
+
+    return path;
 }
 
 }  // namespace
@@ -638,16 +666,18 @@ void SkSVGDevice::AutoElement::addTextAttributes(const SkFont& font) {
     }
 }
 
-sk_sp<SkBaseDevice> SkSVGDevice::Make(const SkISize& size, std::unique_ptr<SkXMLWriter> writer) {
-    return writer ? sk_sp<SkBaseDevice>(new SkSVGDevice(size, std::move(writer)))
+sk_sp<SkBaseDevice> SkSVGDevice::Make(const SkISize& size, std::unique_ptr<SkXMLWriter> writer,
+                                      uint32_t flags) {
+    return writer ? sk_sp<SkBaseDevice>(new SkSVGDevice(size, std::move(writer), flags))
                   : nullptr;
 }
 
-SkSVGDevice::SkSVGDevice(const SkISize& size, std::unique_ptr<SkXMLWriter> writer)
+SkSVGDevice::SkSVGDevice(const SkISize& size, std::unique_ptr<SkXMLWriter> writer, uint32_t flags)
     : INHERITED(SkImageInfo::MakeUnknown(size.fWidth, size.fHeight),
                 SkSurfaceProps(0, kUnknown_SkPixelGeometry))
     , fWriter(std::move(writer))
     , fResourceBucket(new ResourceBucket)
+    , fFlags(flags)
 {
     SkASSERT(fWriter);
 
@@ -839,11 +869,11 @@ void SkSVGDevice::drawBitmapRect(const SkBitmap& bm, const SkRect* srcOrNull,
 class SVGTextBuilder : SkNoncopyable {
 public:
     SVGTextBuilder(SkPoint origin, const SkGlyphRun& glyphRun)
-            : fOrigin(origin)
-            , fLastCharWasWhitespace(true) { // start off in whitespace mode to strip all leadingspace
+            : fOrigin(origin) {
         auto runSize = glyphRun.runSize();
         SkAutoSTArray<64, SkUnichar> unichars(runSize);
-        glyphRun.font().glyphsToUnichars(glyphRun.glyphsIDs().data(), runSize, unichars.get());
+        SkFontPriv::GlyphsToUnichars(glyphRun.font(), glyphRun.glyphsIDs().data(),
+                                     runSize, unichars.get());
         auto positions = glyphRun.positions();
         for (size_t i = 0; i < runSize; ++i) {
             this->appendUnichar(unichars[i], positions[i]);
@@ -851,8 +881,8 @@ public:
     }
 
     const SkString& text() const { return fText; }
-    const SkString& posX() const { return fPosX; }
-    const SkString& posY() const { return fPosY; }
+    const SkString& posX() const { return fPosXStr; }
+    const SkString& posY() const { return fHasConstY ? fConstYStr : fPosYStr; }
 
 private:
     void appendUnichar(SkUnichar c, SkPoint position) {
@@ -897,39 +927,57 @@ private:
                 break;
         }
 
-        this->advancePos(discardPos, position);
         fLastCharWasWhitespace = isWhitespace;
-    }
 
-    void advancePos(bool discard, SkPoint position) {
-        if (!discard) {
-            SkPoint finalPosition = fOrigin + position;
-            fPosX.appendf("%.8g, ", finalPosition.x());
-            fPosY.appendf("%.8g, ", finalPosition.y());
+        if (discardPos) {
+            return;
+        }
+
+        position += fOrigin;
+        fPosXStr.appendf("%.8g, ", position.fX);
+        fPosYStr.appendf("%.8g, ", position.fY);
+
+        if (fConstYStr.isEmpty()) {
+            fConstYStr = fPosYStr;
+            fConstY    = position.fY;
+        } else {
+            fHasConstY &= SkScalarNearlyEqual(fConstY, position.fY);
         }
     }
 
     const SkPoint   fOrigin;
 
-    SkString fText, fPosX, fPosY;
-    bool     fLastCharWasWhitespace;
+    SkString fText,
+             fPosXStr, fPosYStr,
+             fConstYStr;
+    SkScalar fConstY;
+    bool     fLastCharWasWhitespace = true, // start off in whitespace mode to strip leading space
+             fHasConstY             = true;
 };
 
+void SkSVGDevice::drawGlyphRunAsPath(const SkGlyphRun& glyphRun, const SkPoint& origin,
+                                     const SkPaint& runPaint) {
+    this->drawPath(GetPath(glyphRun, origin), runPaint);
+}
+
+void SkSVGDevice::drawGlyphRunAsText(const SkGlyphRun& glyphRun, const SkPoint& origin,
+                                     const SkPaint& runPaint) {
+    AutoElement elem("text", fWriter, fResourceBucket.get(), MxCp(this), runPaint);
+    elem.addTextAttributes(glyphRun.font());
+
+    SVGTextBuilder builder(origin, glyphRun);
+    elem.addAttribute("x", builder.posX());
+    elem.addAttribute("y", builder.posY());
+    elem.addText(builder.text());
+}
+
 void SkSVGDevice::drawGlyphRunList(const SkGlyphRunList& glyphRunList)  {
-
-    auto processGlyphRun = [this]
-                           (SkPoint origin, const SkGlyphRun& glyphRun, const SkPaint& runPaint) {
-        AutoElement elem("text", fWriter, fResourceBucket.get(), MxCp(this), runPaint);
-        elem.addTextAttributes(glyphRun.font());
-
-        SVGTextBuilder builder(origin, glyphRun);
-        elem.addAttribute("x", builder.posX());
-        elem.addAttribute("y", builder.posY());
-        elem.addText(builder.text());
-    };
+    const auto processGlyphRun = (fFlags & SkSVGCanvas::kConvertTextToPaths_Flag)
+            ? &SkSVGDevice::drawGlyphRunAsPath
+            : &SkSVGDevice::drawGlyphRunAsText;
 
     for (auto& glyphRun : glyphRunList) {
-        processGlyphRun(glyphRunList.origin(), glyphRun, glyphRunList.paint());
+        (this->*processGlyphRun)(glyphRun, glyphRunList.origin(), glyphRunList.paint());
     }
 }
 

@@ -9,8 +9,8 @@
 #define SkTypeface_win_dw_DEFINED
 
 #include "include/core/SkTypeface.h"
-#include "include/private/SkLeanWindows.h"
 #include "src/core/SkAdvancedTypefaceMetrics.h"
+#include "src/core/SkLeanWindows.h"
 #include "src/core/SkTypefaceCache.h"
 #include "src/utils/win/SkDWrite.h"
 #include "src/utils/win/SkHRESULT.h"
@@ -128,6 +128,7 @@ protected:
                                        int parameterCount) const override;
     int onGetTableTags(SkFontTableTag tags[]) const override;
     size_t onGetTableData(SkFontTableTag, size_t offset, size_t length, void* data) const override;
+    sk_sp<SkData> onCopyTableData(SkFontTableTag) const override;
 
 private:
     typedef SkTypeface INHERITED;

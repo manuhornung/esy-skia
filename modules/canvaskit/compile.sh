@@ -101,9 +101,13 @@ fi
 GN_FONT="skia_enable_fontmgr_empty=false"
 BUILTIN_FONT="$BASE_DIR/fonts/NotoMono-Regular.ttf.cpp"
 if [[ $@ == *no_font* ]]; then
-  echo "Omitting the built-in font(s)"
+  echo "Omitting the built-in font(s) and font manager"
   BUILTIN_FONT=""
   GN_FONT="skia_enable_fontmgr_empty=true"
+elif [[ $@ == *no_embedded_font* ]]; then
+  echo "Omitting the built-in font(s)"
+  BUILTIN_FONT=""
+  GN_FONT="skia_enable_fontmgr_custom_empty=true skia_enable_fontmgr_empty=false"
 else
   # Generate the font's binary file (which is covered by .gitignore)
   python tools/embed_resources.py \
@@ -181,7 +185,6 @@ echo "Compiling bitcode"
   skia_enable_skshaper=true \
   skia_enable_ccpr=false \
   skia_enable_nvpr=false \
-  skia_enable_skpicture=true \
   skia_enable_pdf=false"
 
 # Build all the libs, we'll link the appropriate ones down below

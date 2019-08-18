@@ -8,10 +8,10 @@
 #include "src/gpu/ops/GrStrokeRectOp.h"
 
 #include "include/core/SkStrokeRec.h"
-#include "include/private/GrColor.h"
 #include "include/private/GrResourceKey.h"
 #include "include/utils/SkRandom.h"
 #include "src/gpu/GrCaps.h"
+#include "src/gpu/GrColor.h"
 #include "src/gpu/GrDefaultGeoProcFactory.h"
 #include "src/gpu/GrDrawOpTest.h"
 #include "src/gpu/GrOpFlushState.h"
@@ -89,7 +89,7 @@ public:
 
     const char* name() const override { return "NonAAStrokeRectOp"; }
 
-    void visitProxies(const VisitProxyFunc& func, VisitorType) const override {
+    void visitProxies(const VisitProxyFunc& func) const override {
         fHelper.visitProxies(func);
     }
 
@@ -163,10 +163,11 @@ public:
 
     FixedFunctionFlags fixedFunctionFlags() const override { return fHelper.fixedFunctionFlags(); }
 
-    GrProcessorSet::Analysis finalize(const GrCaps& caps, const GrAppliedClip* clip,
-                                      GrFSAAType fsaaType, GrClampType clampType) override {
+    GrProcessorSet::Analysis finalize(
+            const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
+            GrClampType clampType) override {
         // This Op uses uniform (not vertex) color, so doesn't need to track wide color.
-        return fHelper.finalizeProcessors(caps, clip, fsaaType, clampType,
+        return fHelper.finalizeProcessors(caps, clip, hasMixedSampledCoverage, clampType,
                                           GrProcessorAnalysisCoverage::kNone, &fColor, nullptr);
     }
 
@@ -383,7 +384,7 @@ public:
 
     const char* name() const override { return "AAStrokeRect"; }
 
-    void visitProxies(const VisitProxyFunc& func, VisitorType) const override {
+    void visitProxies(const VisitProxyFunc& func) const override {
         fHelper.visitProxies(func);
     }
 
@@ -409,11 +410,12 @@ public:
 
     FixedFunctionFlags fixedFunctionFlags() const override { return fHelper.fixedFunctionFlags(); }
 
-    GrProcessorSet::Analysis finalize(const GrCaps& caps, const GrAppliedClip* clip,
-                                      GrFSAAType fsaaType, GrClampType clampType) override {
+    GrProcessorSet::Analysis finalize(
+            const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
+            GrClampType clampType) override {
         return fHelper.finalizeProcessors(
-                caps, clip, fsaaType, clampType, GrProcessorAnalysisCoverage::kSingleChannel,
-                &fRects.back().fColor, &fWideColor);
+                caps, clip, hasMixedSampledCoverage, clampType,
+                GrProcessorAnalysisCoverage::kSingleChannel, &fRects.back().fColor, &fWideColor);
     }
 
 private:
@@ -774,8 +776,10 @@ std::unique_ptr<GrDrawOp> MakeNested(GrRecordingContext* context,
         if (devOutside.isEmpty()) {
             return nullptr;
         }
-        return GrFillRectOp::Make(context, std::move(paint), GrAAType::kCoverage, viewMatrix,
-                                  rects[0]);
+        return GrFillRectOp::Make(context, std::move(paint), GrAAType::kCoverage,
+                                  GrQuadAAFlags::kAll,
+                                  GrQuad::MakeFromRect(rects[0], viewMatrix),
+                                  GrQuad(rects[0]));
     }
 
     return AAStrokeRectOp::Make(context, std::move(paint), viewMatrix, devOutside, devInside);
@@ -797,7 +801,7 @@ GR_DRAW_OP_TEST_DEFINE(NonAAStrokeRectOp) {
     strokePaint.setStrokeJoin(SkPaint::kMiter_Join);
     SkStrokeRec strokeRec(strokePaint);
     GrAAType aaType = GrAAType::kNone;
-    if (fsaaType == GrFSAAType::kUnifiedMSAA) {
+    if (numSamples > 1) {
         aaType = random->nextBool() ? GrAAType::kMSAA : GrAAType::kNone;
     }
     return NonAAStrokeRectOp::Make(context, std::move(paint), viewMatrix, rect, strokeRec, aaType);

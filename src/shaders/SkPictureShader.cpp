@@ -10,7 +10,7 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImage.h"
-#include "include/private/SkArenaAlloc.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkMatrixUtils.h"
 #include "src/core/SkPicturePriv.h"
 #include "src/core/SkReadBuffer.h"
@@ -140,6 +140,22 @@ sk_sp<SkShader> SkPictureShader::Make(sk_sp<SkPicture> picture, SkTileMode tmx, 
         return SkShaders::Empty();
     }
     return sk_sp<SkShader>(new SkPictureShader(std::move(picture), tmx, tmy, localMatrix, tile));
+}
+
+SkPicture* SkPictureShader::isAPicture(SkMatrix* matrix,
+                                       SkTileMode tileModes[2],
+                                       SkRect* tile) const {
+    if (matrix) {
+        *matrix = this->getLocalMatrix();
+    }
+    if (tileModes) {
+        tileModes[0] = fTmx;
+        tileModes[1] = fTmy;
+    }
+    if (tile) {
+        *tile = fTile;
+    }
+    return fPicture.get();
 }
 
 sk_sp<SkFlattenable> SkPictureShader::CreateProc(SkReadBuffer& buffer) {
@@ -329,8 +345,10 @@ std::unique_ptr<GrFragmentProcessor> SkPictureShader::asFragmentProcessor(
     }
 
     auto lm = this->totalLocalMatrix(args.fPreLocalMatrix, args.fPostLocalMatrix);
-    SkColorType dstColorType = kN32_SkColorType;
-    GrPixelConfigToColorType(args.fDstColorSpaceInfo->config(), &dstColorType);
+    SkColorType dstColorType = GrColorTypeToSkColorType(args.fDstColorSpaceInfo->colorType());
+    if (dstColorType == kUnknown_SkColorType) {
+        dstColorType = kRGBA_8888_SkColorType;
+    }
     sk_sp<SkShader> bitmapShader(this->refBitmapShader(*args.fViewMatrix, &lm, dstColorType,
                                                        args.fDstColorSpaceInfo->colorSpace(),
                                                        maxTextureSize));

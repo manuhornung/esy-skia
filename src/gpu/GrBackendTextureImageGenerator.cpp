@@ -51,13 +51,9 @@ GrBackendTextureImageGenerator::Make(sk_sp<GrTexture> texture, GrSurfaceOrigin o
     context->priv().getResourceCache()->insertDelayedResourceUnref(texture.get());
 
     GrBackendTexture backendTexture = texture->getBackendTexture();
-    GrBackendFormat backendFormat = backendTexture.getBackendFormat();
-    if (!backendFormat.isValid()) {
-        return nullptr;
-    }
-    backendTexture.fConfig =
-            context->priv().caps()->getConfigFromBackendFormat(backendFormat, colorType);
-    if (backendTexture.fConfig == kUnknown_GrPixelConfig) {
+
+    if (!context->priv().caps()->areColorTypeAndFormatCompatible(
+            SkColorTypeToGrColorType(colorType), backendTexture.getBackendFormat())) {
         return nullptr;
     }
 
@@ -78,7 +74,6 @@ GrBackendTextureImageGenerator::GrBackendTextureImageGenerator(const SkImageInfo
         , fRefHelper(new RefHelper(texture, owningContextID))
         , fSemaphore(std::move(semaphore))
         , fBackendTexture(backendTex)
-        , fConfig(backendTex.config())
         , fSurfaceOrigin(origin) {}
 
 GrBackendTextureImageGenerator::~GrBackendTextureImageGenerator() {
@@ -109,6 +104,7 @@ sk_sp<GrTextureProxy> GrBackendTextureImageGenerator::onGenerateTexture(
     }
 
     auto proxyProvider = context->priv().proxyProvider();
+    const GrCaps* caps = context->priv().caps();
 
     fBorrowingMutex.acquire();
     sk_sp<GrRefCntedCallback> releaseProcHelper;
@@ -140,20 +136,32 @@ sk_sp<GrTextureProxy> GrBackendTextureImageGenerator::onGenerateTexture(
 
     SkASSERT(fRefHelper->fBorrowingContextID == context->priv().contextID());
 
+    GrBackendFormat backendFormat = fBackendTexture.getBackendFormat();
+    SkASSERT(backendFormat.isValid());
+
+    GrColorType grColorType = SkColorTypeToGrColorType(info.colorType());
+
+    GrPixelConfig config = caps->getConfigFromBackendFormat(backendFormat, grColorType);
+    if (kUnknown_GrPixelConfig == config) {
+        return nullptr;
+    }
+
     GrSurfaceDesc desc;
     desc.fWidth = fBackendTexture.width();
     desc.fHeight = fBackendTexture.height();
-    desc.fConfig = fConfig;
+    desc.fConfig = config;
     GrMipMapped mipMapped = fBackendTexture.hasMipMaps() ? GrMipMapped::kYes : GrMipMapped::kNo;
 
-    GrBackendFormat format = fBackendTexture.getBackendFormat();
-    SkASSERT(format.isValid());
+    // Ganesh assumes that, when wrapping a mipmapped backend texture from a client, that its
+    // mipmaps are fully fleshed out.
+    GrMipMapsStatus mipMapsStatus = fBackendTexture.hasMipMaps()
+            ? GrMipMapsStatus::kValid : GrMipMapsStatus::kNotAllocated;
 
     // Must make copies of member variables to capture in the lambda since this image generator may
     // be deleted before we actually execute the lambda.
     sk_sp<GrTextureProxy> proxy = proxyProvider->createLazyProxy(
             [refHelper = fRefHelper, releaseProcHelper, semaphore = fSemaphore,
-             backendTexture = fBackendTexture](GrResourceProvider* resourceProvider)
+             backendTexture = fBackendTexture, grColorType](GrResourceProvider* resourceProvider)
                     -> GrSurfaceProxy::LazyInstantiationResult {
                 if (semaphore) {
                     resourceProvider->priv().gpu()->waitSemaphore(semaphore);
@@ -179,8 +187,8 @@ sk_sp<GrTextureProxy> GrBackendTextureImageGenerator::onGenerateTexture(
                     // ever see the original texture, so this should be safe.
                     // We make the texture uncacheable so that the release proc is called ASAP.
                     tex = resourceProvider->wrapBackendTexture(
-                            backendTexture, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo,
-                            kRead_GrIOType);
+                            backendTexture, grColorType, kBorrow_GrWrapOwnership,
+                            GrWrapCacheable::kNo, kRead_GrIOType);
                     if (!tex) {
                         return {};
                     }
@@ -191,9 +199,9 @@ sk_sp<GrTextureProxy> GrBackendTextureImageGenerator::onGenerateTexture(
                 // unrelated to the whatever SkImage key may be assigned to the proxy.
                 return {std::move(tex), GrSurfaceProxy::LazyInstantiationKeyMode::kUnsynced};
             },
-            format, desc, fSurfaceOrigin, mipMapped, GrInternalSurfaceFlags::kReadOnly,
-            SkBackingFit::kExact, SkBudgeted::kNo);
-
+            backendFormat, desc, GrRenderable::kNo, 1, fSurfaceOrigin, mipMapped, mipMapsStatus,
+            GrInternalSurfaceFlags::kReadOnly, SkBackingFit::kExact, SkBudgeted::kNo,
+            GrProtected::kNo);
     if (!proxy) {
         return nullptr;
     }
@@ -208,28 +216,9 @@ sk_sp<GrTextureProxy> GrBackendTextureImageGenerator::onGenerateTexture(
         // because Vulkan will want to do the copy as a draw. All other copies would require a
         // layout change in Vulkan and we do not change the layout of borrowed images.
         GrMipMapped mipMapped = willNeedMipMaps ? GrMipMapped::kYes : GrMipMapped::kNo;
-
-        GrBackendFormat format = proxy->backendFormat().makeTexture2D();
-        if (!format.isValid()) {
-            return nullptr;
-        }
-
-        sk_sp<GrRenderTargetContext> rtContext(
-            context->priv().makeDeferredRenderTargetContext(
-                format, SkBackingFit::kExact, info.width(), info.height(),
-                proxy->config(), nullptr, 1, mipMapped, proxy->origin(), nullptr,
-                SkBudgeted::kYes));
-
-        if (!rtContext) {
-            return nullptr;
-        }
-
         SkIRect subset = SkIRect::MakeXYWH(origin.fX, origin.fY, info.width(), info.height());
-        if (!rtContext->copy(proxy.get(), subset, SkIPoint::Make(0, 0))) {
-            return nullptr;
-        }
 
-        return rtContext->asTextureProxyRef();
+        return GrSurfaceProxy::Copy(context, proxy.get(), mipMapped, subset, SkBackingFit::kExact,
+                                    SkBudgeted::kYes);
     }
 }
-

@@ -4,14 +4,16 @@ declare_args() {
   host_cxx = cxx
 
   if (is_android) {
+    _prefix = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin"
     if (host_os == "win") {
-      target_ar = "$ndk/toolchains/$ndk_gccdir-4.9/prebuilt/$ndk_host/$ndk_target/bin/ar.exe"
-      target_cc = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang.exe"
-      target_cxx = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang++.exe"
+      target_ar = "$_prefix/llvm-ar.exe"
+      target_cc = "$_prefix/clang.exe --target=$ndk_target$ndk_api -fno-addrsig"
+      target_cxx =
+          "$_prefix/clang++.exe --target=$ndk_target$ndk_api -fno-addrsig"
     } else {
-      target_ar = "$ndk/toolchains/$ndk_gccdir-4.9/prebuilt/$ndk_host/$ndk_target/bin/ar"
-      target_cc = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang"
-      target_cxx = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang++"
+      target_ar = "$_prefix/llvm-ar"
+      target_cc = "$_prefix/$ndk_target$ndk_api-clang"
+      target_cxx = "$_prefix/$ndk_target$ndk_api-clang++"
     }
   } else {
     target_ar = ar
@@ -31,15 +33,7 @@ if (host_os == "win") {
 toolchain("msvc") {
   lib_dir_switch = "/LIBPATH:"
 
-  if (msvc == 2015) {
-    if (target_cpu == "x86") {
-      bin = "$win_vc/bin"
-    } else {
-      bin = "$win_vc/bin/amd64"
-    }
-  } else {
-    bin = "$win_vc/Tools/MSVC/$win_toolchain_version/bin/HostX64/$target_cpu"
-  }
+  bin = "$win_vc/Tools/MSVC/$win_toolchain_version/bin/HostX64/$target_cpu"
 
   env_setup = ""
   if (target_cpu == "x86") {
@@ -199,7 +193,7 @@ template("gcc_like_toolchain") {
 
     tool("cc") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cc -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cc -MD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
       outputs = [
         "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
@@ -209,7 +203,7 @@ template("gcc_like_toolchain") {
 
     tool("cxx") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cxx -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cxx -MD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
       outputs = [
         "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
@@ -219,7 +213,7 @@ template("gcc_like_toolchain") {
 
     tool("objc") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cc -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_objc}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cc -MD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_objc}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
       outputs = [
         "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
@@ -229,7 +223,7 @@ template("gcc_like_toolchain") {
 
     tool("objcxx") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cxx -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} {{cflags_objcc}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cxx -MD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} {{cflags_objcc}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
       outputs = [
         "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
@@ -239,7 +233,7 @@ template("gcc_like_toolchain") {
 
     tool("asm") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cc -MMD -MF $depfile {{defines}} {{include_dirs}} {{asmflags}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cc -MD -MF $depfile {{defines}} {{include_dirs}} {{asmflags}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
       outputs = [
         "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
@@ -284,7 +278,7 @@ template("gcc_like_toolchain") {
         _end_group = ""
       }
 
-      command = "$cc_wrapper $cxx -shared {{ldflags}} $_start_group @$rspfile {{solibs}} $_end_group {{libs}} $rpath -o {{output}}"
+      command = "$cxx -shared {{ldflags}} $_start_group @$rspfile {{solibs}} $_end_group {{libs}} $rpath -o {{output}}"
       outputs = [
         "{{root_out_dir}}/$soname",
       ]
@@ -311,9 +305,9 @@ template("gcc_like_toolchain") {
         _end_group = ""
       }
       if (is_ios) {
-        command = "$cc_wrapper $cxx {{ldflags}} $_start_group @$rspfile {{solibs}} $_end_group {{libs}} -o $exe_name && dsymutil $exe_name"
+        command = "$cxx {{ldflags}} $_start_group @$rspfile {{solibs}} $_end_group {{libs}} -o $exe_name && dsymutil $exe_name"
       } else {
-        command = "$cc_wrapper $cxx {{ldflags}} $_start_group @$rspfile {{solibs}} $_end_group {{libs}} -o $exe_name"
+        command = "$cxx {{ldflags}} $_start_group @$rspfile {{solibs}} $_end_group {{libs}} -o $exe_name"
       }
 
       outputs = [

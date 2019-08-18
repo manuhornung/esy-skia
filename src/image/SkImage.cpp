@@ -18,6 +18,7 @@
 #include "src/core/SkCachedData.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkImageFilterCache.h"
+#include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkImagePriv.h"
 #include "src/core/SkNextID.h"
 #include "src/core/SkSpecialImage.h"
@@ -282,23 +283,41 @@ sk_sp<SkImage> SkImage::makeWithFilter(GrContext* grContext,
 
     sk_sp<SkImageFilterCache> cache(
         SkImageFilterCache::Create(SkImageFilterCache::kDefaultTransientSize));
-    SkImageFilter::OutputProperties outputProperties(fInfo.colorType(), fInfo.colorSpace());
-    SkImageFilter::Context context(SkMatrix::I(), clipBounds, cache.get(), outputProperties);
 
-    sk_sp<SkSpecialImage> result = filter->filterImage(srcSpecialImage.get(), context, offset);
+    // The filters operate in the local space of the src image, where (0,0) corresponds to the
+    // subset's top left corner. But the clip bounds and any crop rects on the filters are in the
+    // original coordinate system, so configure the CTM to correct crop rects and explicitly adjust
+    // the clip bounds (since it is assumed to already be in image space).
+    SkImageFilter_Base::Context context(SkMatrix::MakeTrans(-subset.x(), -subset.y()),
+                                        clipBounds.makeOffset(-subset.x(), -subset.y()),
+                                        cache.get(), fInfo.colorType(), fInfo.colorSpace(),
+                                        srcSpecialImage.get());
+
+    sk_sp<SkSpecialImage> result = as_IFB(filter)->filterImage(context, offset);
     if (!result) {
         return nullptr;
     }
 
-    *outSubset = SkIRect::MakeWH(result->width(), result->height());
-    if (!outSubset->intersect(clipBounds.makeOffset(-offset->x(), -offset->y()))) {
+    // The output image and offset are relative to the subset rectangle, so the offset needs to
+    // be shifted to put it in the correct spot with respect to the original coordinate system
+    offset->fX += subset.x();
+    offset->fY += subset.y();
+
+    // Final clip against the exact clipBounds (the clip provided in the context gets adjusted
+    // to account for pixel-moving filters so doesn't always exactly match when finished). The
+    // clipBounds are translated into the clippedDstRect coordinate space, including the
+    // result->subset() ensures that the result's image pixel origin does not affect results.
+    SkIRect dstRect = result->subset();
+    SkIRect clippedDstRect = dstRect;
+    if (!clippedDstRect.intersect(clipBounds.makeOffset(result->subset().x() - offset->x(),
+                                                        result->subset().y() - offset->y()))) {
         return nullptr;
     }
-    offset->fX += outSubset->x();
-    offset->fY += outSubset->y();
 
-    // Note that here we're returning the special image's entire backing store, loose padding
-    // and all!
+    // Adjust the geometric offset if the top-left corner moved as well
+    offset->fX += (clippedDstRect.x() - dstRect.x());
+    offset->fY += (clippedDstRect.y() - dstRect.y());
+    *outSubset = clippedDstRect;
     return result->asImage();
 }
 
@@ -358,6 +377,25 @@ sk_sp<SkImage> SkImage::makeColorTypeAndColorSpace(SkColorType targetColorType,
                                                      targetColorType, std::move(targetColorSpace));
 }
 
+sk_sp<SkImage> SkImage::reinterpretColorSpace(sk_sp<SkColorSpace> target) const {
+    if (!target) {
+        return nullptr;
+    }
+
+    // No need to create a new image if:
+    // (1) The color spaces are equal.
+    // (2) The color type is kAlpha8.
+    SkColorSpace* colorSpace = this->colorSpace();
+    if (!colorSpace) {
+        colorSpace = sk_srgb_singleton();
+    }
+    if (SkColorSpace::Equals(colorSpace, target.get()) || this->isAlphaOnly()) {
+        return sk_ref_sp(const_cast<SkImage*>(this));
+    }
+
+    return as_IB(this)->onReinterpretColorSpace(std::move(target));
+}
+
 sk_sp<SkImage> SkImage::makeNonTextureImage() const {
     if (!this->isTextureBacked()) {
         return sk_ref_sp(const_cast<SkImage*>(this));
@@ -389,6 +427,10 @@ sk_sp<SkImage> SkImage::makeRasterImage() const {
 //////////////////////////////////////////////////////////////////////////////////////
 
 #if !SK_SUPPORT_GPU
+
+sk_sp<SkImage> SkImage::DecodeToTexture(GrContext*, const void*, size_t, const SkIRect*) {
+    return nullptr;
+}
 
 sk_sp<SkImage> SkImage::MakeFromTexture(GrContext* ctx,
                                         const GrBackendTexture& tex, GrSurfaceOrigin origin,
@@ -454,8 +496,7 @@ sk_sp<SkImage> SkImage::MakeFromNV12TexturesCopy(GrContext* ctx, SkYUVColorSpace
     return nullptr;
 }
 
-sk_sp<SkImage> SkImage::makeTextureImage(GrContext*, SkColorSpace* dstColorSpace,
-                                         GrMipMapped mipMapped) const {
+sk_sp<SkImage> SkImage::makeTextureImage(GrContext*, GrMipMapped mipMapped) const {
     return nullptr;
 }
 
@@ -487,34 +528,4 @@ void SkImage_unpinAsTexture(const SkImage* image, GrContext* ctx) {
 SkIRect SkImage_getSubset(const SkImage* image) {
     SkASSERT(image);
     return as_IB(image)->onGetSubset();
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-sk_sp<SkImage> SkImageMakeRasterCopyAndAssignColorSpace(const SkImage* src,
-                                                        SkColorSpace* colorSpace) {
-    // Read the pixels out of the source image, with no conversion
-    const SkImageInfo& info = src->imageInfo();
-    if (kUnknown_SkColorType == info.colorType()) {
-        SkDEBUGFAIL("Unexpected color type");
-        return nullptr;
-    }
-
-    size_t rowBytes = info.minRowBytes();
-    size_t size = info.computeByteSize(rowBytes);
-    if (SkImageInfo::ByteSizeOverflowed(size)) {
-        return nullptr;
-    }
-    auto data = SkData::MakeUninitialized(size);
-    if (!data) {
-        return nullptr;
-    }
-
-    SkPixmap pm(info, data->writable_data(), rowBytes);
-    if (!src->readPixels(pm, 0, 0, SkImage::kDisallow_CachingHint)) {
-        return nullptr;
-    }
-
-    // Wrap them in a new image with a different color space
-    return SkImage::MakeRasterData(info.makeColorSpace(sk_ref_sp(colorSpace)), data, rowBytes);
 }

@@ -48,7 +48,7 @@
       "skia@abc123"
     ],
     "cwd": "[START_DIR]/cache/work",
-    "env_prefixes": {
+    "env_suffixes": {
       "PATH": [
         "RECIPE_REPO[depot_tools]"
       ]
@@ -224,7 +224,6 @@
     "name": "Upload SKPs"
   },
   {
-    "jsonResult": null,
     "name": "$result"
   }
 ]

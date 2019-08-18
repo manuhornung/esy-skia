@@ -8,8 +8,8 @@
 #ifndef GrXferProcessor_DEFINED
 #define GrXferProcessor_DEFINED
 
-#include "include/gpu/GrBlend.h"
 #include "include/gpu/GrTypes.h"
+#include "src/gpu/GrBlend.h"
 #include "src/gpu/GrNonAtomicRef.h"
 #include "src/gpu/GrProcessor.h"
 #include "src/gpu/GrProcessorAnalysis.h"
@@ -123,24 +123,24 @@ public:
     }
 
     struct BlendInfo {
-        void reset() {
-            fEquation = kAdd_GrBlendEquation;
-            fSrcBlend = kOne_GrBlendCoeff;
-            fDstBlend = kZero_GrBlendCoeff;
-            fBlendConstant = SK_PMColor4fTRANSPARENT;
-            fWriteColor = true;
-        }
-
         SkDEBUGCODE(SkString dump() const;)
 
-        GrBlendEquation fEquation;
-        GrBlendCoeff    fSrcBlend;
-        GrBlendCoeff    fDstBlend;
-        SkPMColor4f     fBlendConstant;
-        bool            fWriteColor;
+        GrBlendEquation fEquation = kAdd_GrBlendEquation;
+        GrBlendCoeff    fSrcBlend = kOne_GrBlendCoeff;
+        GrBlendCoeff    fDstBlend = kZero_GrBlendCoeff;
+        SkPMColor4f     fBlendConstant = SK_PMColor4fTRANSPARENT;
+        bool            fWriteColor = true;
     };
 
-    void getBlendInfo(BlendInfo* blendInfo) const;
+    inline BlendInfo getBlendInfo() const {
+        BlendInfo blendInfo;
+        if (!this->willReadDstColor()) {
+            this->onGetBlendInfo(&blendInfo);
+        } else if (this->dstReadUsesMixedSamples()) {
+            blendInfo.fDstBlend = kIS2A_GrBlendCoeff;
+        }
+        return blendInfo;
+    }
 
     bool willReadDstColor() const { return fWillReadDstColor; }
 

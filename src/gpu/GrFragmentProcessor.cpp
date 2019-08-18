@@ -47,10 +47,11 @@ bool GrFragmentProcessor::isEqual(const GrFragmentProcessor& that) const {
     return true;
 }
 
-void GrFragmentProcessor::visitProxies(const std::function<void(GrSurfaceProxy*)>& func) {
+void GrFragmentProcessor::visitProxies(const GrOp::VisitProxyFunc& func) {
     GrFragmentProcessor::TextureAccessIter iter(this);
     while (const TextureSampler* sampler = iter.next()) {
-        func(sampler->proxy());
+        bool mipped = (GrSamplerState::Filter::kMipMap == sampler->samplerState().filter());
+        func(sampler->proxy(), GrMipMapped(mipped));
     }
 }
 
@@ -74,32 +75,23 @@ void GrFragmentProcessor::addCoordTransform(const GrCoordTransform* transform) {
     SkDEBUGCODE(transform->setInProcessor();)
 }
 
-bool GrFragmentProcessor::instantiate(GrResourceProvider* resourceProvider) const {
+#ifdef SK_DEBUG
+bool GrFragmentProcessor::isInstantiated() const {
     for (int i = 0; i < fTextureSamplerCnt; ++i) {
-        if (!this->textureSampler(i).instantiate(resourceProvider)) {
+        if (!this->textureSampler(i).isInstantiated()) {
             return false;
         }
     }
 
     for (int i = 0; i < this->numChildProcessors(); ++i) {
-        if (!this->childProcessor(i).instantiate(resourceProvider)) {
+        if (!this->childProcessor(i).isInstantiated()) {
             return false;
         }
     }
 
     return true;
 }
-
-void GrFragmentProcessor::markPendingExecution() const {
-    for (int i = 0; i < fTextureSamplerCnt; ++i) {
-        auto* ref = this->textureSampler(i).proxyRef();
-        ref->markPendingIO();
-        ref->removeRef();
-    }
-    for (int i = 0; i < this->numChildProcessors(); ++i) {
-        this->childProcessor(i).markPendingExecution();
-    }
-}
+#endif
 
 int GrFragmentProcessor::registerChildProcessor(std::unique_ptr<GrFragmentProcessor> child) {
     if (child->usesLocalCoords()) {
@@ -241,7 +233,7 @@ std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::MakeInputPremulAndMulB
             public:
                 void emitCode(EmitArgs& args) override {
                     GrGLSLFPFragmentBuilder* fragBuilder = args.fFragBuilder;
-                    this->emitChild(0, args);
+                    this->invokeChild(0, args);
                     fragBuilder->codeAppendf("%s.rgb *= %s.rgb;", args.fOutputColor,
                                                                 args.fInputColor);
                     fragBuilder->codeAppendf("%s *= %s.a;", args.fOutputColor, args.fInputColor);
@@ -318,15 +310,15 @@ std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::RunInSeries(
                 void emitCode(EmitArgs& args) override {
                     // First guy's input might be nil.
                     SkString temp("out0");
-                    this->emitChild(0, args.fInputColor, &temp, args);
+                    this->invokeChild(0, args.fInputColor, &temp, args);
                     SkString input = temp;
                     for (int i = 1; i < this->numChildProcessors() - 1; ++i) {
                         temp.printf("out%d", i);
-                        this->emitChild(i, input.c_str(), &temp, args);
+                        this->invokeChild(i, input.c_str(), &temp, args);
                         input = temp;
                     }
                     // Last guy writes to our output variable.
-                    this->emitChild(this->numChildProcessors() - 1, input.c_str(), args);
+                    this->invokeChild(this->numChildProcessors() - 1, input.c_str(), args);
                 }
             };
             return new GLFP;
@@ -438,7 +430,7 @@ GrFragmentProcessor::TextureSampler::TextureSampler(sk_sp<GrTextureProxy> proxy,
 
 void GrFragmentProcessor::TextureSampler::reset(sk_sp<GrTextureProxy> proxy,
                                                 const GrSamplerState& samplerState) {
-    fProxyRef.setProxy(std::move(proxy), kRead_GrIOType);
+    fProxy = std::move(proxy);
     fSamplerState = samplerState;
     fSamplerState.setFilterMode(SkTMin(samplerState.filter(), this->proxy()->highestFilterMode()));
 }
@@ -446,7 +438,7 @@ void GrFragmentProcessor::TextureSampler::reset(sk_sp<GrTextureProxy> proxy,
 void GrFragmentProcessor::TextureSampler::reset(sk_sp<GrTextureProxy> proxy,
                                                 GrSamplerState::Filter filterMode,
                                                 GrSamplerState::WrapMode wrapXAndY) {
-    fProxyRef.setProxy(std::move(proxy), kRead_GrIOType);
+    fProxy = std::move(proxy);
     filterMode = SkTMin(filterMode, this->proxy()->highestFilterMode());
     fSamplerState = GrSamplerState(wrapXAndY, filterMode);
 }

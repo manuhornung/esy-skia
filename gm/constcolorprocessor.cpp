@@ -27,9 +27,9 @@
 #include "include/effects/SkGradientShader.h"
 #include "include/gpu/GrConfig.h"
 #include "include/gpu/GrContext.h"
-#include "include/private/GrColor.h"
 #include "include/private/GrTypesPriv.h"
 #include "include/private/SkColorData.h"
+#include "src/gpu/GrColor.h"
 #include "src/gpu/GrFragmentProcessor.h"
 #include "src/gpu/GrPaint.h"
 #include "src/gpu/GrRenderTargetContext.h"
@@ -121,8 +121,8 @@ protected:
 
                     grPaint.addColorFragmentProcessor(std::move(fp));
                     renderTargetContext->priv().testingOnly_addDrawOp(
-                            GrFillRectOp::Make(context, std::move(grPaint), GrAAType::kNone,
-                                               viewMatrix, renderRect));
+                            GrFillRectOp::MakeNonAARect(context, std::move(grPaint),
+                                                        viewMatrix, renderRect));
 
                     // Draw labels for the input to the processor and the processor to the right of
                     // the test rect. The input label appears above the processor label.

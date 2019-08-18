@@ -7,9 +7,9 @@
 
 #include "include/private/GrContext_Base.h"
 
-#include "include/private/GrSkSLFPFactoryCache.h"
 #include "src/gpu/GrBaseContextPriv.h"
 #include "src/gpu/GrCaps.h"
+#include "src/gpu/GrSkSLFPFactoryCache.h"
 
 static int32_t next_id() {
     static std::atomic<int32_t> nextID{1};
@@ -42,6 +42,24 @@ const GrCaps* GrContext_Base::caps() const { return fCaps.get(); }
 sk_sp<const GrCaps> GrContext_Base::refCaps() const { return fCaps; }
 
 sk_sp<GrSkSLFPFactoryCache> GrContext_Base::fpFactoryCache() { return fFPFactoryCache; }
+
+GrBackendFormat GrContext_Base::defaultBackendFormat(SkColorType skColorType,
+                                                     GrRenderable renderable) const {
+    const GrCaps* caps = this->caps();
+
+    GrColorType grColorType = SkColorTypeToGrColorType(skColorType);
+
+    GrBackendFormat format = caps->getDefaultBackendFormat(grColorType, renderable);
+    if (!format.isValid()) {
+        return GrBackendFormat();
+    }
+
+    SkASSERT(caps->isFormatTexturableAndUploadable(grColorType, format));
+    SkASSERT(renderable == GrRenderable::kNo ||
+             caps->isFormatAsColorTypeRenderable(grColorType, format));
+
+    return format;
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 sk_sp<const GrCaps> GrBaseContextPriv::refCaps() const {

@@ -45,6 +45,8 @@
 #include "src/opts/SkUtils_opts.h"
 #include "src/opts/SkXfermode_opts.h"
 
+#include "src/core/SkCubicSolver.h"
+
 namespace SkOpts {
     // Define default function pointer values here...
     // If our global compile options are set high enough, these defaults might even be
@@ -72,6 +74,12 @@ namespace SkOpts {
     DEFINE_DEFAULT(memset16);
     DEFINE_DEFAULT(memset32);
     DEFINE_DEFAULT(memset64);
+
+    DEFINE_DEFAULT(rect_memset16);
+    DEFINE_DEFAULT(rect_memset32);
+    DEFINE_DEFAULT(rect_memset64);
+
+    DEFINE_DEFAULT(cubic_solver);
 
     DEFINE_DEFAULT(hash_fn);
 

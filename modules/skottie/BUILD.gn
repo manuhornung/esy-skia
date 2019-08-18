@@ -39,6 +39,7 @@ if (skia_enable_skottie) {
 
       public_configs = [ ":utils_config" ]
       configs += [ "../../:skia_private" ]
+
       sources = [
         "utils/SkottieUtils.cpp",
       ]
@@ -64,6 +65,7 @@ if (skia_enable_skottie) {
           ":skottie",
           "../..:gpu_tool_utils",
           "../..:skia",
+          "../skshaper",
         ]
       }
 

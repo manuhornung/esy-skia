@@ -19,6 +19,10 @@
 #include "src/sksl/ir/SkSLProgramElement.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 
+#ifdef SK_VULKAN
+#include "src/gpu/vk/GrVkCaps.h"
+#endif
+
 // name of the render target width uniform
 #define SKSL_RTWIDTH_NAME "u_skRTWidth"
 
@@ -80,10 +84,13 @@ struct Program {
             int fValue;
         };
 
-#ifdef SKSL_STANDALONE
+#if defined(SKSL_STANDALONE) || !SK_SUPPORT_GPU
         const StandaloneShaderCaps* fCaps = &standaloneCaps;
 #else
         const GrShaderCaps* fCaps = nullptr;
+#ifdef SK_VULKAN
+        const GrVkCaps* fVkCaps = nullptr;
+#endif
 #endif
         // if false, sk_FragCoord is exactly the same as gl_FragCoord. If true, the y coordinate
         // must be flipped.
@@ -97,6 +104,9 @@ struct Program {
         bool fForceHighPrecision = false;
         // if true, add -0.5 bias to LOD of all texture lookups
         bool fSharpenTextures = false;
+        // if the program needs to create an RTHeight uniform, this is its offset in the uniform
+        // buffer
+        int fRTHeightOffset = -1;
         std::unordered_map<String, Value> fArgs;
     };
 
@@ -215,7 +225,6 @@ struct Program {
         kFragmentProcessor_Kind,
         kPipelineStage_Kind,
         kGeneric_Kind,
-
     };
 
     Program(Kind kind,

@@ -198,7 +198,11 @@ protected:
         fCodeIndex++;
     }
 
-    SkString& versionDecl() { return fShaderStrings[kVersionDecl]; }
+    void deleteStage() {
+        fShaderStrings.pop_back();
+        fCodeIndex--;
+    }
+
     SkString& extensions() { return fShaderStrings[kExtensions]; }
     SkString& definitions() { return fShaderStrings[kDefinitions]; }
     SkString& precisionQualifier() { return fShaderStrings[kPrecisionQualifier]; }
@@ -213,7 +217,6 @@ protected:
     virtual void onFinalize() = 0;
 
     enum {
-        kVersionDecl,
         kExtensions,
         kDefinitions,
         kPrecisionQualifier,
@@ -245,6 +248,7 @@ protected:
     friend class GrCCCoverageProcessor; // to access code().
     friend class GrGLSLProgramBuilder;
     friend class GrGLProgramBuilder;
+    friend class GrDawnProgramBuilder;
     friend class GrGLSLVaryingHandler; // to access noperspective interpolation feature.
     friend class GrGLPathProgramBuilder; // to access fInputs.
     friend class GrVkPipelineStateBuilder;

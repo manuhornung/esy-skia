@@ -8,7 +8,8 @@
 #include "tools/sk_app/MetalWindowContext.h"
 #include "tools/sk_app/mac/WindowContextFactory_mac.h"
 
-#include <Cocoa/Cocoa.h>
+#import <Cocoa/Cocoa.h>
+#import <QuartzCore/CAConstraintLayoutManager.h>
 
 using sk_app::DisplayParams;
 using sk_app::window_context_factory::MacWindowInfo;
@@ -54,6 +55,12 @@ bool MetalWindowContext_mac::onInitializeContext() {
     fMetalLayer.drawableSize = frameRect.size;
     fMetalLayer.frame = frameRect;
 
+    BOOL useVsync = fDisplayParams.fDisableVsync ? NO : YES;
+    fMetalLayer.displaySyncEnabled = useVsync;  // TODO: need solution for 10.12 or lower
+    fMetalLayer.layoutManager = [CAConstraintLayoutManager layoutManager];
+    fMetalLayer.autoresizingMask = kCALayerHeightSizable | kCALayerWidthSizable;
+    fMetalLayer.contentsGravity = kCAGravityTopLeft;
+
     fMainView.layer = fMetalLayer;
     fMainView.wantsLayer = YES;
 
@@ -80,10 +87,10 @@ void MetalWindowContext_mac::resize(int w, int h) {
 namespace sk_app {
 namespace window_context_factory {
 
-WindowContext* NewMetalForMac(const MacWindowInfo& info, const DisplayParams& params) {
-    WindowContext* ctx = new MetalWindowContext_mac(info, params);
+std::unique_ptr<WindowContext> MakeMetalForMac(const MacWindowInfo& info,
+                                               const DisplayParams& params) {
+    std::unique_ptr<WindowContext> ctx(new MetalWindowContext_mac(info, params));
     if (!ctx->isValid()) {
-        delete ctx;
         return nullptr;
     }
     return ctx;

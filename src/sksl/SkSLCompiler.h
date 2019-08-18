@@ -68,6 +68,8 @@ public:
         enum class Kind {
             kInput,
             kOutput,
+            kCoordX,
+            kCoordY,
             kUniform,
             kChildProcessor
         };
@@ -149,6 +151,11 @@ public:
     static bool IsAssignment(Token::Kind token);
 
 private:
+    void processIncludeFile(Program::Kind kind, const char* src, size_t length,
+                            std::shared_ptr<SymbolTable> base,
+                            std::vector<std::unique_ptr<ProgramElement>>* outElements,
+                            std::shared_ptr<SymbolTable>* outSymbolTable);
+
     void addDefinition(const Expression* lvalue, std::unique_ptr<Expression>* expr,
                        DefinitionMap* definitions);
 
@@ -184,12 +191,17 @@ private:
 
     Position position(int offset);
 
+    std::shared_ptr<SymbolTable> fGpuSymbolTable;
     std::vector<std::unique_ptr<ProgramElement>> fVertexInclude;
     std::shared_ptr<SymbolTable> fVertexSymbolTable;
     std::vector<std::unique_ptr<ProgramElement>> fFragmentInclude;
     std::shared_ptr<SymbolTable> fFragmentSymbolTable;
     std::vector<std::unique_ptr<ProgramElement>> fGeometryInclude;
     std::shared_ptr<SymbolTable> fGeometrySymbolTable;
+    std::vector<std::unique_ptr<ProgramElement>> fPipelineInclude;
+    std::shared_ptr<SymbolTable> fPipelineSymbolTable;
+    std::vector<std::unique_ptr<ProgramElement>> fInterpreterInclude;
+    std::shared_ptr<SymbolTable> fInterpreterSymbolTable;
 
     std::shared_ptr<SymbolTable> fTypes;
     IRGenerator* fIRGenerator;

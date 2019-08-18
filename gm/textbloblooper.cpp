@@ -252,10 +252,12 @@ protected:
 
         int y = 0;
         for (int looper = 0; looper < fLoopers.count(); looper++) {
-            paint.setLooper(fLoopers[looper]);
+            SkTextBlob* b = fBlob.get();
             canvas->save();
             canvas->translate(0, SkIntToScalar(y));
-            canvas->drawTextBlob(fBlob, 0, 0, paint);
+            fLoopers[looper]->apply(canvas, paint, [b](SkCanvas* c, const SkPaint& p) {
+                c->drawTextBlob(b, 0, 0, p);
+            });
             canvas->restore();
             y += SkScalarFloorToInt(bounds.height());
         }

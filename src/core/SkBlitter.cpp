@@ -10,10 +10,10 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkString.h"
-#include "include/private/SkArenaAlloc.h"
 #include "include/private/SkColorData.h"
 #include "include/private/SkTo.h"
 #include "src/core/SkAntiRun.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkMask.h"
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkPaintPriv.h"
@@ -730,6 +730,12 @@ SkBlitter* SkBlitter::Choose(const SkPixmap& device,
     if (paint->isDither() && !SkPaintPriv::ShouldDither(*paint, device.colorType())) {
         paint.writable()->setDither(false);
     }
+
+#if defined(SK_USE_SKVM_BLITTER)
+    if (auto blitter = SkCreateSkVMBlitter(device, *paint, matrix, alloc)) {
+        return blitter;
+    }
+#endif
 
     // We'll end here for many interesting cases: color spaces, color filters, most color types.
     if (UseRasterPipelineBlitter(device, *paint, matrix)) {

@@ -54,7 +54,8 @@ sk_sp<GrTextureProxy> GrTextureMaker::onRefTextureProxyForParams(const GrSampler
     this->makeCopyKey(copyParams, &copyKey);
     sk_sp<GrTextureProxy> cachedProxy;
     if (copyKey.isValid()) {
-        cachedProxy = proxyProvider->findOrCreateProxyByUniqueKey(copyKey, origOrigin);
+        cachedProxy =
+                proxyProvider->findOrCreateProxyByUniqueKey(copyKey, this->colorType(), origOrigin);
         if (cachedProxy && (!willBeMipped || GrMipMapped::kYes == cachedProxy->mipMapped())) {
             return cachedProxy;
         }
@@ -74,7 +75,8 @@ sk_sp<GrTextureProxy> GrTextureMaker::onRefTextureProxyForParams(const GrSampler
         return nullptr;
     }
 
-    sk_sp<GrTextureProxy> result = CopyOnGpu(this->context(), source, copyParams, willBeMipped);
+    sk_sp<GrTextureProxy> result =
+            CopyOnGpu(this->context(), source, this->colorType(), copyParams, willBeMipped);
 
     if (!result) {
         // If we were unable to make a copy and we only needed a copy for mips, then we will return

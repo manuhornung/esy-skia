@@ -8,17 +8,17 @@
 #include "src/gpu/GrBlurUtils.h"
 
 #include "include/private/GrRecordingContext.h"
-#include "include/private/GrTextureProxy.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrFixedClip.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrRenderTargetContextPriv.h"
-#include "src/gpu/GrShape.h"
 #include "src/gpu/GrSoftwarePathRenderer.h"
 #include "src/gpu/GrStyle.h"
+#include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/effects/generated/GrSimpleTextureEffect.h"
+#include "src/gpu/geometry/GrShape.h"
 
 #include "include/core/SkPaint.h"
 #include "src/core/SkDraw.h"
@@ -80,7 +80,8 @@ static bool sw_draw_with_mask_filter(GrRecordingContext* context,
 
     if (key.isValid()) {
         // TODO: this cache look up is duplicated in draw_shape_with_mask_filter for gpu
-        filteredMask = proxyProvider->findOrCreateProxyByUniqueKey(key, kTopLeft_GrSurfaceOrigin);
+        filteredMask = proxyProvider->findOrCreateProxyByUniqueKey(key, GrColorType::kAlpha_8,
+                                                                   kTopLeft_GrSurfaceOrigin);
     }
 
     SkIRect drawRect;
@@ -148,9 +149,7 @@ static bool sw_draw_with_mask_filter(GrRecordingContext* context,
             return false;
         }
 
-        filteredMask = proxyProvider->createTextureProxy(std::move(image),
-                                                         kNone_GrSurfaceFlags,
-                                                         1, SkBudgeted::kYes,
+        filteredMask = proxyProvider->createTextureProxy(std::move(image), 1, SkBudgeted::kYes,
                                                          SkBackingFit::kApprox);
         if (!filteredMask) {
             return false;
@@ -175,13 +174,11 @@ static sk_sp<GrTextureProxy> create_mask_GPU(GrRecordingContext* context,
                                              const SkMatrix& origViewMatrix,
                                              const GrShape& shape,
                                              int sampleCnt) {
-    GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kAlpha_8_SkColorType);
     sk_sp<GrRenderTargetContext> rtContext(
-        context->priv().makeDeferredRenderTargetContextWithFallback(
-            format, SkBackingFit::kApprox, maskRect.width(), maskRect.height(),
-            kAlpha_8_GrPixelConfig, nullptr, sampleCnt, GrMipMapped::kNo,
-            kTopLeft_GrSurfaceOrigin));
+            context->priv().makeDeferredRenderTargetContextWithFallback(
+                    SkBackingFit::kApprox, maskRect.width(), maskRect.height(),
+                    GrColorType::kAlpha_8, nullptr, sampleCnt, GrMipMapped::kNo,
+                    kTopLeft_GrSurfaceOrigin));
     if (!rtContext) {
         return nullptr;
     }
@@ -393,7 +390,7 @@ static void draw_shape_with_mask_filter(GrRecordingContext* context,
         if (maskKey.isValid()) {
             // TODO: this cache look up is duplicated in sw_draw_with_mask_filter for raster
             filteredMask = proxyProvider->findOrCreateProxyByUniqueKey(
-                                                maskKey, kTopLeft_GrSurfaceOrigin);
+                    maskKey, GrColorType::kAlpha_8, kTopLeft_GrSurfaceOrigin);
         }
 
         if (!filteredMask) {
@@ -402,7 +399,7 @@ static void draw_shape_with_mask_filter(GrRecordingContext* context,
                                                         maskRect,
                                                         viewMatrix,
                                                         *shape,
-                                                        renderTargetContext->numColorSamples()));
+                                                        renderTargetContext->numSamples()));
             if (maskProxy) {
                 filteredMask = maskFilter->filterMaskGPU(context,
                                                          std::move(maskProxy),
