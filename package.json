@@ -45,8 +45,5 @@
   "dependencies": {
     "@esy-cross/ninja-build": "^1.8.2001",
     "esy-libjpeg-turbo": "prometheansacrifice/libjpeg-turbo#50e8e32c48"
-  },
-  "scripts": {
-    "postinstall": "python tools/git-sync-deps"
   }
 }
