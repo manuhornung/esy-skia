@@ -3,12 +3,13 @@
 OS=$1
 
 # Copy artifacts into output directories
+cp -a $cur__root/include/c/. $cur__install/include/c/
 if [[ $OS == 'windows' ]]
 then
-    cp -a $cur__target_dir/out/Shared/libskia.a $cur__lib
-    cp -a $cur__target_dir/out/Shared/skia.dll $cur__bin
+    cp $cur__target_dir/out/Shared/libskia.a $cur__lib
+    cp $cur__target_dir/out/Shared/skia.dll $cur__bin
 else
-    cp -a $cur__target_dir/out/Static/libskia.a $cur__lib
+    cp $cur__target_dir/out/Static/libskia.a $cur__lib
 fi
 
 # Create pkg-config file skia.pc
@@ -24,14 +25,11 @@ else
 fi
 
 cat >$cur__lib/skia.pc << EOF
-includedir=$cur__root/include
-libdir=$cur__lib
-
 Name: skia
 Description: 2D graphics library
 Version: $cur__version
-Cflags: -I$cur__root -I\${includedir}/c -std=c++1y
-Libs: -L\${libdir} $platformSpecificFlags -lskia -lstdc++
+Cflags: -I$cur__install -I$cur__install/include/c -std=c++1y
+Libs: -L\$cur__lib $platformSpecificFlags -lskia -lstdc++
 EOF
 
 if [[ $OS != "windows" ]]
