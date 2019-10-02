@@ -1,3 +1,7 @@
+# DEPRECATED
+Please use https://github.com/revery-ui/esy-skia instead
+
+
 [![Build Status](https://dev.azure.com/manuhornung/manuhornung/_apis/build/status/manuhornung.esy-skia?branchName=master)](https://dev.azure.com/manuhornung/manuhornung/_build/latest?definitionId=1&branchName=master)
 
 
